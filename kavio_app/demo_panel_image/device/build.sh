@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 仅负责构建和暂存 Device Component；最终安装包由 kavio_app/kavio_app.py 统一生成。
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BUILD_DIR="${SCRIPT_DIR}/build"
+OUTPUT_DIR="${PROJECT_DIR}/output/device"
+TARGET_NAME="demo_panel_image"
+
+usage() {
+    cat <<'USAGE'
+Usage: ./build.sh [--release] [--clean] [--toolchain <file>]
+USAGE
+}
+
+resolve_file() {
+    if [[ "$1" = /* ]]; then
+        printf '%s\n' "$1"
+        return
+    fi
+    local directory
+    directory="$(cd "$(dirname "$1")" && pwd)"
+    printf '%s/%s\n' "$directory" "$(basename "$1")"
+}
+
+clean() {
+    rm -rf "${BUILD_DIR}"
+    rm -f "${OUTPUT_DIR}/${TARGET_NAME}"
+}
+
+main() {
+    local build_type=Debug
+    local toolchain=''
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -r|--release)
+                build_type=Release
+                ;;
+            -c|--clean)
+                clean
+                return
+                ;;
+            --toolchain)
+                shift
+                [[ $# -gt 0 ]] || { echo "--toolchain requires a path" >&2; exit 2; }
+                toolchain="$(resolve_file "$1")"
+                [[ -f "${toolchain}" ]] || { echo "toolchain not found: ${toolchain}" >&2; exit 2; }
+                ;;
+            -h|--help)
+                usage
+                return
+                ;;
+            *)
+                echo "unsupported argument: $1" >&2
+                usage >&2
+                exit 2
+                ;;
+        esac
+        shift
+    done
+
+    local cmake_args=(-S "${SCRIPT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${build_type}")
+    [[ -z "${toolchain}" ]] || cmake_args+=("-DCMAKE_TOOLCHAIN_FILE=${toolchain}")
+
+    cmake "${cmake_args[@]}"
+
+    local jobs=1
+    command -v nproc >/dev/null 2>&1 && jobs="$(nproc)"
+    cmake --build "${BUILD_DIR}" --target "${TARGET_NAME}" -j"${jobs}"
+
+    local executable="${BUILD_DIR}/bin/${TARGET_NAME}"
+    [[ -f "${executable}" ]] || { echo "executable not found: ${executable}" >&2; exit 1; }
+
+    mkdir -p "${OUTPUT_DIR}"
+    cp -f "${executable}" "${OUTPUT_DIR}/${TARGET_NAME}"
+    chmod 0755 "${OUTPUT_DIR}/${TARGET_NAME}"
+    echo "Staged: ${OUTPUT_DIR}/${TARGET_NAME}"
+}
+
+main "$@"

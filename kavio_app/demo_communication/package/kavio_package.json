@@ -1,0 +1,24 @@
+{
+  "packageConfigVersion": 1,
+  "appId": "com.kavio.demo.app-communication",
+  "version": "1.0.0",
+  "name": "Demo App Communication",
+  "description": "Windows Host Component collects system metrics and returns them to the Device Component for TX overlay display.",
+  "icon": "icon.png",
+  "device": {
+    "directory": "device",
+    "runtime": "native",
+    "entry": "demo_communication",
+    "arguments": [],
+    "autoStart": false
+  },
+  "host": {
+    "directory": "host",
+    "binary": "host.dll",
+    "panel": false
+  },
+  "config": {
+    "definition": "config/definition.json",
+    "default": "config/default.json"
+  }
+}

@@ -1,0 +1,14 @@
+.vs/
+**/device/build/
+**/output/
+**/dist/
+**/Debug/
+**/Release/
+**/x64/
+**/x86/
+**/*.VC.db
+**/*.VC.opendb
+**/*.suo
+**/*.user
+**/*.pdb
+**/host.dll

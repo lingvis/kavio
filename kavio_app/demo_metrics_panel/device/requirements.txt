@@ -1,0 +1,3 @@
+# Demo business-code dependencies only.
+# Kavio Python SDK runtime dependencies are declared by kavio_sdk/device/py/requirements.txt
+# and are merged into output/device/requirements.txt by build.sh.
