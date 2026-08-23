@@ -1,0 +1,25 @@
+{
+  "packageConfigVersion": 1,
+  "appId": "com.kavio.demo.python-metrics-panel",
+  "version": "1.0.0",
+  "name": "Demo Python Metrics Panel",
+  "description": "Python Device Component renders Windows metrics in a draggable TX rectangle controlled by an App Panel.",
+  "icon": "icon.png",
+  "device": {
+    "directory": "device",
+    "runtime": "python",
+    "entry": "main.py",
+    "arguments": [],
+    "autoStart": false,
+    "python": {
+      "pythonVersion": "3.10",
+      "installMode": "auto",
+      "requirements": "requirements.txt"
+    }
+  },
+  "host": {
+    "directory": "host",
+    "binary": "host.dll",
+    "panel": true
+  }
+}

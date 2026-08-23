@@ -1,0 +1,6 @@
+# Auto-generated from KavioSdkVersion.h. Do not edit manually.
+
+SDK_VERSION_MAJOR = 3
+SDK_VERSION_MINOR = 0
+SDK_VERSION_PATCH = 0
+SDK_VERSION = f"{SDK_VERSION_MAJOR}.{SDK_VERSION_MINOR}.{SDK_VERSION_PATCH}"

@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package kavio.runtime.proto;
+
+import "input_defs.proto";
+
+enum RuntimePixelFormatPb {
+  RUNTIME_PIXEL_FORMAT_UNKNOWN = 0;
+  RUNTIME_PIXEL_FORMAT_UYVY = 1;
+  RUNTIME_PIXEL_FORMAT_YUYV = 2;
+  RUNTIME_PIXEL_FORMAT_BGRA8888 = 3;
+}
+
+enum RuntimeVideoStatusPb {
+  RUNTIME_VIDEO_STATUS_UNKNOWN = 0;
+  RUNTIME_VIDEO_STATUS_NOT_CONNECTED = 1;
+  RUNTIME_VIDEO_STATUS_CONNECTED = 2;
+  RUNTIME_VIDEO_STATUS_RUNNING = 3;
+  RUNTIME_VIDEO_STATUS_STOPPED = 4;
+  RUNTIME_VIDEO_STATUS_ERROR = 5;
+}
+
+message RuntimeVideoChannelStatePb {
+  RuntimeVideoStatusPb status = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  uint32 fps = 4;
+  RuntimePixelFormatPb pixel_format = 5;
+}
+
+message RuntimeInputStatePb {
+  kavio.input.proto.InputModePb mode = 1;
+  kavio.input.proto.InputChannelPb channel = 2;
+  kavio.input.proto.InputConnectionStatusPb connection_status = 3;
+}
+
+message RuntimeDataPb {
+  RuntimeVideoChannelStatePb rx_info = 1;
+  RuntimeVideoChannelStatePb tx_info = 2;
+  RuntimeInputStatePb input = 3;
+}

@@ -1,0 +1,15 @@
+{
+  "packageConfigVersion": 1,
+  "appId": "com.kavio.demo.rx-tx",
+  "version": "1.0.0",
+  "name": "Demo RX TX",
+  "description": "Device-only RX/TX shared-memory demonstration.",
+  "icon": "icon.png",
+  "device": {
+    "directory": "device",
+    "runtime": "native",
+    "entry": "demo_rx_tx",
+    "arguments": [],
+    "autoStart": false
+  }
+}

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package kavio.input.proto;
+
+/* ==========================================================================
+ * Purpose
+ * --------------------------------------------------------------------------
+ * 1. Hold shared input-related enum definitions.
+ * 2. Keep config, HAL events, and future IPC messages aligned to one source.
+ * 3. Preserve existing enum numeric values used by current platform config.
+ * ======================================================================== */
+
+enum InputModePb {
+  /* Must stay aligned with existing persisted config semantics. */
+  INPUT_MODE_BLE = 0;
+  INPUT_MODE_RF24 = 1;
+  INPUT_MODE_USB = 2;
+}
+
+enum InputChannelPb {
+  INPUT_CHANNEL_1 = 0;
+  INPUT_CHANNEL_2 = 1;
+  INPUT_CHANNEL_3 = 2;
+  INPUT_CHANNEL_MAX = 3;
+}
+
+enum InputConnectionStatusPb {
+  INPUT_CONNECTION_STATUS_SYNCING = 0;
+  INPUT_CONNECTION_STATUS_PAIRING = 1;
+  INPUT_CONNECTION_STATUS_CONNECT = 2;
+  INPUT_CONNECTION_STATUS_DISCONNECT = 3;
+}

@@ -1,0 +1,249 @@
+syntax = "proto3";
+
+package kavio.input.proto;
+
+/* ============================================================================
+ * 说明
+ * ----------------------------------------------------------------------------
+ * 1. input.proto 用于定义通用输入设备事件模型，覆盖键盘与鼠标常见操作
+ * 2. 本文件定义独立输入消息模型，不接入 IPCPackagePb；IPC 封装由上层通信模块负责
+ * 3. 键盘键值采用 HID Usage Keyboard/Keypad 页面中的通用编码
+ * 4. InputEventPb 统一封装 keyboard / mouse 两类输入事件，具体类型由 oneof body_case 判定
+ * ========================================================================== */
+
+enum InputKeyCodePb {
+  /* Error & Reserved */
+  KC_RESERVED = 0;
+  KC_ERR_ROLLOVER = 1;
+  KC_ERR_POST_FAIL = 2;
+  KC_ERR_UNDEFINED = 3;
+
+  /* Letters (0x04 ~ 0x1D) */
+  KC_A = 4;
+  KC_B = 5;
+  KC_C = 6;
+  KC_D = 7;
+  KC_E = 8;
+  KC_F = 9;
+  KC_G = 10;
+  KC_H = 11;
+  KC_I = 12;
+  KC_J = 13;
+  KC_K = 14;
+  KC_L = 15;
+  KC_M = 16;
+  KC_N = 17;
+  KC_O = 18;
+  KC_P = 19;
+  KC_Q = 20;
+  KC_R = 21;
+  KC_S = 22;
+  KC_T = 23;
+  KC_U = 24;
+  KC_V = 25;
+  KC_W = 26;
+  KC_X = 27;
+  KC_Y = 28;
+  KC_Z = 29;
+
+  /* Numbers (0x1E ~ 0x27) */
+  KC_1 = 30;
+  KC_2 = 31;
+  KC_3 = 32;
+  KC_4 = 33;
+  KC_5 = 34;
+  KC_6 = 35;
+  KC_7 = 36;
+  KC_8 = 37;
+  KC_9 = 38;
+  KC_0 = 39;
+
+  /* Control and whitespace (0x28 ~ 0x2C) */
+  KC_ENTER = 40;
+  KC_ESCAPE = 41;
+  KC_BSPACE = 42;
+  KC_TAB = 43;
+  KC_SPACE = 44;
+
+  /* Symbols and punctuation (0x2D ~ 0x39) */
+  KC_MINUS = 45;
+  KC_EQUAL = 46;
+  KC_LBRACKET = 47;
+  KC_RBRACKET = 48;
+  KC_BSLASH = 49;
+  KC_NON_US_HASH = 50;
+  KC_SCOLON = 51;
+  KC_QUOTE = 52;
+  KC_GRAVE = 53;
+  KC_COMMA = 54;
+  KC_PERIOD = 55;
+  KC_SLASH = 56;
+  KC_CAPSLOCK = 57;
+
+  /* Function keys (0x3A ~ 0x45) */
+  KC_F1 = 58;
+  KC_F2 = 59;
+  KC_F3 = 60;
+  KC_F4 = 61;
+  KC_F5 = 62;
+  KC_F6 = 63;
+  KC_F7 = 64;
+  KC_F8 = 65;
+  KC_F9 = 66;
+  KC_F10 = 67;
+  KC_F11 = 68;
+  KC_F12 = 69;
+
+  /* Sys keys & Pause (0x46 ~ 0x48) */
+  KC_PRINTSCREEN = 70;
+  KC_SCROLLLOCK = 71;
+  KC_PAUSE = 72;
+
+  /* Navigation (0x49 ~ 0x4E) */
+  KC_INSERT = 73;
+  KC_HOME = 74;
+  KC_PGUP = 75;
+  KC_DELETE = 76;
+  KC_END = 77;
+  KC_PGDN = 78;
+
+  /* Arrow keys (0x4F ~ 0x52) */
+  KC_RIGHT = 79;
+  KC_LEFT = 80;
+  KC_DOWN = 81;
+  KC_UP = 82;
+
+  /* Keypad (0x53 ~ 0x63) */
+  KC_NUMLOCK = 83;
+  KC_PSLASH = 84;
+  KC_PAST = 85;
+  KC_PMNS = 86;
+  KC_PPLS = 87;
+  KC_PENT = 88;
+  KC_P1 = 89;
+  KC_P2 = 90;
+  KC_P3 = 91;
+  KC_P4 = 92;
+  KC_P5 = 93;
+  KC_P6 = 94;
+  KC_P7 = 95;
+  KC_P8 = 96;
+  KC_P9 = 97;
+  KC_P0 = 98;
+  KC_PDOT = 99;
+
+  /* International & Application (0x64 ~ 0x66) */
+  KC_NON_US_BACKSLASH = 100;
+  KC_APPLICATION = 101;
+  KC_POWER = 102;
+
+  /* More keypad & extended (0x67 ~ 0x73) */
+  KC_P_EQUAL = 103;
+  KC_F13 = 104;
+  KC_F14 = 105;
+  KC_F15 = 106;
+  KC_F16 = 107;
+  KC_F17 = 108;
+  KC_F18 = 109;
+  KC_F19 = 110;
+  KC_F20 = 111;
+  KC_F21 = 112;
+  KC_F22 = 113;
+  KC_F23 = 114;
+  KC_F24 = 115;
+
+  /* Run/Help/Media (0x74 ~ 0x81) */
+  KC_EXECUTE = 116;
+  KC_HELP_SRC = 117;
+  KC_MENU_SRC = 118;
+  KC_SELECT_SRC = 119;
+  KC_STOP_SRC = 120;
+  KC_AGAIN_SRC = 121;
+  KC_UNDO_SRC = 122;
+  KC_CUT_SRC = 123;
+  KC_COPY_SRC = 124;
+  KC_PASTE_SRC = 125;
+  KC_FIND_SRC = 126;
+  KC_MUTE = 127;
+  KC_VOLUME_UP = 128;
+  KC_VOLUME_DOWN = 129;
+
+  /* Locking Keys (0x82 ~ 0x84) */
+  KC_LOCKING_CAPSLOCK = 130;
+  KC_LOCKING_NUMLOCK = 131;
+  KC_LOCKING_SCROLLLOCK = 132;
+
+  /* Keypad Comma/Equal & International (0x85 ~ 0x8F) */
+  KC_KP_COMMA = 133;
+  KC_KP_EQUAL_AS400 = 134;
+  KC_INTERNATIONAL1 = 135;
+  KC_INTERNATIONAL2 = 136;
+  KC_INTERNATIONAL3 = 137;
+  KC_INTERNATIONAL4 = 138;
+  KC_INTERNATIONAL5 = 139;
+  KC_INTERNATIONAL6 = 140;
+  KC_INTERNATIONAL7 = 141;
+  KC_INTERNATIONAL8 = 142;
+  KC_INTERNATIONAL9 = 143;
+
+  /* Languages (0x90 ~ 0x98) */
+  KC_LANG1 = 144;
+  KC_LANG2 = 145;
+  KC_LANG3 = 146;
+  KC_LANG4 = 147;
+  KC_LANG5 = 148;
+  KC_LANG6 = 149;
+  KC_LANG7 = 150;
+  KC_LANG8 = 151;
+  KC_LANG9 = 152;
+
+  /* Modifiers (0xE0 ~ 0xE7) */
+  KC_LCTRL = 224;
+  KC_LSHIFT = 225;
+  KC_LALT = 226;
+  KC_LGUI = 227;
+  KC_RCTRL = 228;
+  KC_RSHIFT = 229;
+  KC_RALT = 230;
+  KC_RGUI = 231;
+}
+
+message KeyboardEventPb {
+  enum KeyOptionPb {
+    KEY_OPTION_UNKNOWN = 0;
+    KEY_OPTION_DOWN = 1;
+    KEY_OPTION_UP = 2;
+  }
+
+  KeyOptionPb key_option = 1;
+  InputKeyCodePb key_code = 2;
+}
+
+message MouseEventPb {
+  enum MouseOptionPb {
+    MOUSE_OPTION_UNKNOWN = 0;
+    MOUSE_OPTION_MOVE = 1;
+    MOUSE_OPTION_LBUTTON_DOWN = 2;
+    MOUSE_OPTION_LBUTTON_UP = 3;
+    MOUSE_OPTION_RBUTTON_DOWN = 4;
+    MOUSE_OPTION_RBUTTON_UP = 5;
+    MOUSE_OPTION_MBUTTON_DOWN = 6;
+    MOUSE_OPTION_MBUTTON_UP = 7;
+    MOUSE_OPTION_WHEEL = 8;
+  }
+
+  MouseOptionPb mouse_option = 1;
+  int32 x = 2;
+  int32 y = 3;
+  int32 wheel = 4;
+}
+
+message InputEventPb {
+  uint64 timestamp_ns = 1;
+
+  /* 10~19：具体输入事件类型区段。 */
+  oneof event_body {
+    KeyboardEventPb keyboard = 10;
+    MouseEventPb mouse = 11;
+  }
+}

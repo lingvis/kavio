@@ -1,0 +1,20 @@
+{
+  "packageConfigVersion": 1,
+  "appId": "com.kavio.demo.app-panel-image",
+  "version": "1.0.0",
+  "name": "Demo App Panel Image",
+  "description": "Drop a PNG/GIF into an App Panel, upload it to the Device Component, and drag its TX position.",
+  "icon": "icon.png",
+  "device": {
+    "directory": "device",
+    "runtime": "native",
+    "entry": "demo_panel_image",
+    "arguments": [],
+    "autoStart": false
+  },
+  "host": {
+    "directory": "host",
+    "binary": "host.dll",
+    "panel": true
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "packageConfigVersion": 1,
+  "appId": "com.kavio.virtual-hdmi-stream",
+  "version": "2.0.0",
+  "name": "Virtual HDMI Stream",
+  "description": "Creates a 720x720 Windows virtual display with the public signed VirtualDrivers VDD, captures it through DXGI Desktop Duplication, and streams frames to the device over the Kavio channel.",
+  "icon": "icon.png",
+  "device": {
+    "directory": "device",
+    "runtime": "native",
+    "entry": "demo_virtual_hdmi",
+    "arguments": [],
+    "autoStart": true
+  },
+  "host": {
+    "directory": "host",
+    "binary": "host.dll",
+    "panel": true
+  }
+}
