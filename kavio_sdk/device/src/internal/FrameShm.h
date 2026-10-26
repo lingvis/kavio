@@ -20,10 +20,15 @@
 #include <unistd.h>
 
 #include <kavio/Types.h>
-#include "InternalTypes.h"
 #include "ShmBase.h"
 
 namespace kavio {
+
+enum class ShmType {
+    kUnknown = 0,
+    kRx,
+    kTx,
+};
 
 /* ============================================================================
  * FrameShm 设计

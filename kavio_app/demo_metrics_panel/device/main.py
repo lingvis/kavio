@@ -17,6 +17,9 @@ import protocol
 import renderer
 from kavio_bridge import KavioBridge
 
+
+# Demo 每 2 秒主动查询 Windows 指标：数据实时性与 USB 数据报数量之间的折中。
+# Ready 每秒重发用于 Host 晚连接；两者都不是渲染帧率。
 QUERY_INTERVAL_SECONDS = 2.0
 READY_INTERVAL_SECONDS = 1.0
 
@@ -44,6 +47,7 @@ def _set_channel_ready(ready: bool) -> None:
 
 
 # 一个 Channel 回调对应一条完整业务数据报。先尝试按 Response 解析，再按 Position 解析。
+# Channel 每条消息独立完整：解析后只更新有锁状态，不在 SDK 的回调中写 TX。
 def _on_channel_data(payload: bytes) -> None:
     global _metrics, _position, _generation
     metrics = protocol.parse_response(payload)
@@ -83,6 +87,7 @@ def _signal_handler(_signum: int, _frame: object) -> None:
     _stop.set()
 
 
+# 主线程负责绘制和 SHM 写入；后台回调只更新指标与坐标快照。
 def main() -> int:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -111,8 +116,8 @@ def main() -> int:
                 metrics = _metrics
 
             # Client ready 之后才能创建 TX Surface；bridge 会在 session 重建后自动丢弃旧 surface。
-            if client_ready:
-                bridge.ensure_surface(renderer.WIDTH, renderer.HEIGHT)
+            surface_ready = client_ready and bridge.ensure_surface(
+                renderer.WIDTH, renderer.HEIGHT)
 
             # DeviceReady 是业务层就绪声明，Host 收到后才会发送 Position。
             if channel_ready and now >= next_ready:
@@ -125,7 +130,7 @@ def main() -> int:
                 next_query = now + QUERY_INTERVAL_SECONDS
 
             # 只有指标或位置发生变化时才重新生成像素，避免 30ms 主循环持续重画静态内容。
-            if client_ready and generation != rendered_generation:
+            if surface_ready and generation != rendered_generation:
                 pixels = renderer.render(_render_lines(metrics, position))
                 if bridge.write_frame(
                     pixels,

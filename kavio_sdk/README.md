@@ -115,9 +115,10 @@ kavio_sdk/host/include
 | RX 视频 | `SetRxParams` / `ReadLatestRxFrame` | 启用 RX 取帧并读取最新视频帧 |
 | TX 图层 | `CreateTxSurface` / `TxSurface::WriteFrame` | 创建 BGRA8888 TX Surface 并提交 App 图像 |
 | TX 控制 | `SetTxParams` | 控制 TX 是否启用及 App 图层层级 |
+| H.264 编码流 | `SubscribeH264Stream` / `ReadH264Packet` | 订阅 Platform 公共编码流，通过只读 SHM 读取数据包 |
 | 输入事件 | `SendInputEvent` | 发送键盘、鼠标事件 |
 | USB Channel | `SendCommChannelData` | 向同一 App 的 Host Component 发送业务数据 |
-| App 配置 | `SendAppConfigResponse` | 处理标准 App Configuration 读写请求 |
+| App 配置 | `GetAppConfig` / `UpdateAppConfig` | SDK 自动处理 GET/SET；成功 SET 通过 `OnMessage` 通知业务代码 |
 | 运行统计 | `QueryStats` | 查询当前运行统计信息 |
 
 Host 与 Device 的业务消息应通过 USB Channel 传输。C++ Device API 支持发送 **1 字节到 1 MiB** 的单条完整数据报。
@@ -208,11 +209,14 @@ Host Component 使用稳定 C ABI，通过 `struct_size` 判断结构体字段�
 
 ## 7. 第三方依赖
 
-Device C++ SDK 当前构建使用 protobuf `3.21.12`，目录约定为：
+Device C++ SDK 使用随构建提供的 protobuf `3.21.12` 与 JsonCpp `1.9.5`：
 
 ```text
 kavio_sdk/device/3rdParty/protobuf-3.21.12/
+kavio_sdk/device/3rdParty/jsoncpp-1.9.5/
 ```
+
+这些目录是 SDK 构建依赖，不属于 App 公共 API；实际依赖源码需在构建前准备。
 
 Kavio SDK 不把 OpenCV 作为公共依赖。App 如果需要 OpenCV、FFmpeg 或其他库，应在自己的 App 工程中声明和管理。
 
@@ -235,6 +239,7 @@ Kavio SDK 不把 OpenCV 作为公共依赖。App 如果需要 OpenCV、FFmpeg �
 | `demo_communication` | C++ | DLL | USB Channel、Windows 数据采集和 App Configuration |
 | `demo_panel_image` | C++ | DLL | App Panel、图片传输和 TX 图层联动 |
 | `demo_metrics_panel` | Python | DLL | Python Device Component、USB Channel 和 App Panel |
+| `demo_virtual_hdmi` | C++ | DLL | 虚拟显示捕获、图像流传输及 App Panel |
 
 第一次开发建议从 `kavio_app/README.md` 开始，再根据目标选择对应 Demo 和 SDK 文档。
 

@@ -104,6 +104,7 @@ demo_panel_image/
 │   └── HostComponent.cpp
 └── package/
     ├── kavio_package.json
+    ├── schema_description.json
     └── icon.png
 ```
 

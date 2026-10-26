@@ -32,13 +32,17 @@ namespace {
 
 using namespace kavio_virtual_hdmi;
 
+// 接收队列最多 1024 条完整 Channel 数据报；超过上限计数并丢弃，随后触发重同步。
+// 主循环一次最多处理 512 条，给超时、连接状态和 TX 发布留出调度机会。
+// 60fps 是通过 AppReady 对 Host 宣告的上限，不是 H.264 VENC 的帧率设置。
+// Ready 每秒重发便于 Host 晚接入；帧超时 2s 防止中断传输永久占用 pending 状态。
+// 关键帧请求 200ms 退避，防止错误帧引起请求风暴。
 constexpr std::size_t kMaxQueuedDatagrams = 1024;
 constexpr std::size_t kMaxDatagramsPerLoop = 512;
 constexpr std::uint32_t kAdvertisedMaxFps = 60;
 constexpr auto kReadyInterval = std::chrono::seconds(1);
 constexpr auto kFrameTimeout = std::chrono::seconds(2);
 constexpr auto kKeyFrameRequestRetry = std::chrono::milliseconds(200);
-constexpr auto kSurfaceRequestTimeout = std::chrono::seconds(2);
 
 std::atomic<bool> g_stop(false);
 
@@ -52,6 +56,7 @@ std::uint64_t NowNs() {
             std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
+// SDK 通道通知可能比解码快：仅缓存完整数据报，绝不让 IPC 派发线程等待解码/写屏。
 class DatagramQueue {
 public:
     bool Push(const std::vector<std::uint8_t>& data) {
@@ -93,6 +98,7 @@ std::vector<std::uint8_t> MakeMessage(MessageType type, const Payload& payload) 
     return data;
 }
 
+// 发送当前设备支持的 720x720/BGRA/TileSize/FPS 能力，Host 按此决定上传格式。
 bool SendAppReady(kavio::KavioClient& client) {
     AppReadyPayload payload{};
     payload.width = kFrameWidth;
@@ -110,6 +116,7 @@ bool SendAppReady(kavio::KavioClient& client) {
     return true;
 }
 
+// ACK 表示组帧与校验结果；Host 据此确认依赖基线是否可继续用于下一帧。
 void SendFrameAck(kavio::KavioClient& client,
                   std::uint64_t frame_id,
                   FrameAckStatus ack_status,
@@ -128,6 +135,7 @@ void SendFrameAck(kavio::KavioClient& client,
     }
 }
 
+// 丢失依赖基线时请求 I 帧；每次失败使用重试间隔，不能按每个 Tile 连续请求。
 class KeyFrameRequester {
 public:
     void ResetRetry() {
@@ -161,9 +169,10 @@ private:
     std::chrono::steady_clock::time_point next_request_{};
 };
 
-bool InitializeTxSurface(kavio::KavioClient& client, kavio::TxSurface& surface) {
-    const kavio::Status create = client.CreateTxSurface(
-        kFrameWidth, kFrameHeight, surface, kSurfaceRequestTimeout);
+// 在 OnMessage 已收到远端创建成功后才打开 SHM 并初始化 TX 画布。
+bool InitializeTxSurface(kavio::KavioClient& client, kavio::TxSurface& surface,
+                         const kavio::ipc::proto::ShmInfoPb& info) {
+    const kavio::Status create = client.OpenTxSurface(info, surface);
     if (!create.ok()) {
         std::cerr << "CreateTxSurface failed: " << create.message << std::endl;
         return false;
@@ -198,6 +207,7 @@ bool InitializeTxSurface(kavio::KavioClient& client, kavio::TxSurface& surface) 
 // TX is intentionally decoupled from frame assembly. There is no FIFO here:
 // if rendering falls behind, the newest complete frame replaces the pending
 // frame so latency stays bounded instead of building a stale video backlog.
+// 单独发布线程消化完整帧；保留最新有效结果，避免共享内存写入阻塞 Channel 接收。
 class TxFramePublisher {
 public:
     explicit TxFramePublisher(kavio::TxSurface& surface)
@@ -291,6 +301,7 @@ private:
     kavio::ImageFrame latest_;
 };
 
+// 任何 Tile/CRC/依赖错误都显式反馈并请求恢复，不能直接把不完整 P 帧显示出去。
 void HandleAssemblyError(kavio::KavioClient& client,
                          FrameReceiver& receiver,
                          KeyFrameRequester& key_requester,
@@ -309,6 +320,8 @@ void HandleAssemblyError(kavio::KavioClient& client,
                           error.key_frame_reason, false);
 }
 
+// 按业务 MessageType 分发 Host 数据报；I/P 增量组装由 FrameReceiver 负责。
+// 只解析 Device 端自定义 FrameBegin/Tile/End，非标准 H.264 NAL 数据。
 void HandleDatagram(kavio::KavioClient& client,
                     TxFramePublisher& publisher,
                     FrameReceiver& receiver,
@@ -441,8 +454,70 @@ void HandleDatagram(kavio::KavioClient& client,
     }
 }
 
+// OnMessage 只接收 Channel 数据报、更新状态，以及在 TX 创建回复中打开 SHM。
+// 数据解码由主循环消费 DatagramQueue；TX 对象跨线程交接使用 ready_tx_mutex。
+class AppMessageHandler final : public kavio::IClientMessageHandler {
+public:
+    explicit AppMessageHandler(kavio::KavioClient& client, std::mutex& ready_tx_mutex, std::unique_ptr<kavio::TxSurface>& ready_tx, std::atomic<bool>& tx_create_pending, std::atomic<bool>& client_ready, std::atomic<bool>& channel_ready, DatagramQueue& incoming, std::atomic<std::uint64_t>& dropped_datagrams) : client(client), ready_tx_mutex(ready_tx_mutex), ready_tx(ready_tx), tx_create_pending(tx_create_pending), client_ready(client_ready), channel_ready(channel_ready), incoming(incoming), dropped_datagrams(dropped_datagrams) {}
+
+    void OnDisconnected() override {
+        client_ready.store(false, std::memory_order_release);
+        channel_ready.store(false, std::memory_order_release);
+        tx_create_pending.store(false);
+        std::lock_guard<std::mutex> lock(ready_tx_mutex);
+        ready_tx.reset();
+    }
+
+    void OnMessage(const kavio::ipc::proto::IPCPackagePb& msg) override {
+        namespace ip = kavio::ipc::proto;
+        if (msg.header().msg_type() == ip::MSG_P2A_RSP_CREATE_TX_SHM &&
+            msg.payload().has_p2a_rsp_create_tx_shm()) {
+            const auto& info = msg.payload().p2a_rsp_create_tx_shm().tx_shm();
+            auto opened = std::make_unique<kavio::TxSurface>();
+            if (InitializeTxSurface(client, *opened, info)) {
+                std::lock_guard<std::mutex> lock(ready_tx_mutex);
+                ready_tx = std::move(opened);
+            } else {
+                uint64_t request_id = 0;
+                client.DestroyTxSurface(info.id(), request_id);
+            }
+            tx_create_pending.store(false);
+        } else if (msg.header().msg_type() == ip::MSG_P2A_RSP_ERROR && msg.payload().has_p2a_rsp_error() &&
+                   msg.payload().p2a_rsp_error().failed_for() == ip::MSG_A2P_REQ_CREATE_TX_SHM) {
+            std::cerr << "CreateTxSurface: " << msg.payload().p2a_rsp_error().message() << std::endl;
+            tx_create_pending.store(false);
+        }
+        switch (msg.header().msg_type()) {
+        case ip::MSG_P2A_RSP_CREATE_SESSION:
+            client_ready.store(true, std::memory_order_release);
+            channel_ready.store(client.IsCommChannelReady(), std::memory_order_release);
+            break;
+        case ip::MSG_P2A_NTF_USB_HOST_STATE:
+        case ip::MSG_P2A_NTF_COMM_PEER_STATE:
+            channel_ready.store(client.IsCommChannelReady(), std::memory_order_release); break;
+        case ip::MSG_P2A_DATA_COMM_CHANNEL:
+            if (msg.payload().has_p2a_data_comm_channel()) {
+                const auto& p = msg.payload().p2a_data_comm_channel().payload();
+                if (!incoming.Push(std::vector<uint8_t>(p.begin(), p.end())))
+                    dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
+            }
+            break;
+        default: break;
+        }
+    }
+private:
+    kavio::KavioClient& client;
+    std::mutex& ready_tx_mutex;
+    std::unique_ptr<kavio::TxSurface>& ready_tx;
+    std::atomic<bool>& tx_create_pending;
+    std::atomic<bool>& client_ready;
+    std::atomic<bool>& channel_ready;
+    DatagramQueue& incoming;
+    std::atomic<std::uint64_t>& dropped_datagrams;
+};
 } // namespace
 
+// 主循环依次处理 Channel 队列、组帧超时、TX 申请和发布；避免在 OnMessage 执行繁重组帧。
 int main() {
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
@@ -452,34 +527,25 @@ int main() {
     std::atomic<std::uint64_t> dropped_datagrams(0);
     DatagramQueue incoming;
 
+    std::mutex ready_tx_mutex;
+    std::unique_ptr<kavio::TxSurface> ready_tx;
+    std::atomic<bool> tx_create_pending{false};
+    std::unique_ptr<AppMessageHandler> handler;
     kavio::KavioClient client;
-    kavio::SessionOptions options;
-    options.client_name = "demo_virtual_hdmi";
-    options.rx_params.enabled = false;
-    options.tx_params.enabled = true;
-    options.tx_params.z_order = 0;
+    handler = std::make_unique<AppMessageHandler>(client, ready_tx_mutex, ready_tx,
+                                                  tx_create_pending, client_ready,
+                                                  channel_ready, incoming, dropped_datagrams);
+    kavio::ipc::proto::A2PReqCreateSessionPb options;
+    options.set_client_name("demo_virtual_hdmi");
+    // 虚拟副屏的画面来自 USB Host Component，而非 HDMI RX，故关闭 RX 订阅。
+    // TX 使用 z_order=0 作为示例默认层级，720x720 图像大小由共用协议固定。
+    options.mutable_rx_params()->set_enabled(false);
+    options.mutable_rx_params()->set_frame_sample_interval(1);
+    options.mutable_tx_params()->set_enabled(true);
+    options.mutable_tx_params()->set_z_order(0);
 
-    kavio::KavioClient::Callbacks callbacks;
-    callbacks.on_client_ready = [&client_ready] {
-        client_ready.store(true, std::memory_order_release);
-    };
-    callbacks.on_client_invalid = [&client_ready, &channel_ready] {
-        client_ready.store(false, std::memory_order_release);
-        channel_ready.store(false, std::memory_order_release);
-    };
-    callbacks.on_comm_channel_ready_changed = [&channel_ready](bool ready) {
-        channel_ready.store(ready, std::memory_order_release);
-    };
-    // SDK worker thread only enqueues complete datagrams. Decoding/CRC remains on
-    // the main thread; TxSurface::WriteFrame runs on its own latest-frame thread.
-    callbacks.on_comm_channel_data = [&incoming, &dropped_datagrams](
-        const std::vector<std::uint8_t>& data) {
-        if (!incoming.Push(data)) {
-            dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
-        }
-    };
 
-    const kavio::Status start = client.Start(options, std::move(callbacks));
+    const kavio::Status start = client.Start(options, *handler);
     if (!start.ok()) {
         std::cerr << "Start KavioClient failed: " << start.message << std::endl;
         return 1;
@@ -508,7 +574,7 @@ int main() {
                 publisher.reset();
             }
             if (surface.IsValid()) {
-                surface.Destroy(std::chrono::seconds(1));
+                { uint64_t id = 0; surface.Destroy(id); }
             }
         }
 
@@ -519,15 +585,28 @@ int main() {
             if (publisher) publisher->Clear();
         }
 
-        if (is_client_ready && !surface.IsValid() && now >= next_surface_retry) {
-            if (!InitializeTxSurface(client, surface)) {
+        std::unique_ptr<kavio::TxSurface> opened;
+        {
+            std::lock_guard<std::mutex> lock(ready_tx_mutex);
+            opened = std::move(ready_tx);
+        }
+        if (is_client_ready && opened) {
+            surface = std::move(*opened);
+            publisher.reset(new TxFramePublisher(surface));
+            publisher->Start();
+            receiver.ResetStream();
+            key_requester.ResetRetry();
+            next_ready_announce = now;
+        }
+        if (is_client_ready && !tx_create_pending.load() &&
+            !surface.IsValid() && now >= next_surface_retry) {
+            tx_create_pending.store(true);
+            uint64_t request_id = 0;
+            auto st = client.CreateTxSurface(kFrameWidth, kFrameHeight, request_id);
+            if (!st.ok()) {
+                tx_create_pending.store(false);
+                // TX 申请失败后延迟 500ms 再尝试，防止异常资源状态下忙循环。
                 next_surface_retry = now + std::chrono::milliseconds(500);
-            } else {
-                publisher.reset(new TxFramePublisher(surface));
-                publisher->Start();
-                receiver.ResetStream();
-                key_requester.ResetRetry();
-                next_ready_announce = now;
             }
         }
 
@@ -535,6 +614,7 @@ int main() {
             if (SendAppReady(client)) {
                 next_ready_announce = now + kReadyInterval;
             } else {
+                // 图层首次准备阶段缩短 Ready 广播间隔，让 Host 尽早开始推送。
                 next_ready_announce = now + std::chrono::milliseconds(250);
             }
         }
@@ -589,6 +669,7 @@ int main() {
         // If data is already queued, keep draining it immediately. Sleeping only
         // while idle avoids adding 5 ms gaps inside I frames with 100+ tiles.
         if (processed == 0) {
+            // 2ms 是无事件时的主循环休眠，不等同于视频输出或编码间隔。
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     }
@@ -597,7 +678,7 @@ int main() {
         publisher->Stop();
         publisher.reset();
     }
-    if (surface.IsValid()) surface.Destroy(kSurfaceRequestTimeout);
+    if (surface.IsValid()) { uint64_t id = 0; surface.Destroy(id); }
     client.Stop();
     return 0;
 }

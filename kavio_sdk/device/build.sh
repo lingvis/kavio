@@ -42,45 +42,6 @@ clean_build() {
     echo "Cleaned Device SDK build output and generated Python SDK artifacts"
 }
 
-validate_generated_python_sdk() {
-    PYTHONPATH="${SCRIPT_DIR}/py${PYTHONPATH:+:${PYTHONPATH}}" python3 - <<'PY'
-from kavio_sdk.proto_py.ipc_pb2 import ReqSessionCreatePb
-from kavio_sdk.sdk_version import (
-    SDK_VERSION_MAJOR,
-    SDK_VERSION_MINOR,
-    SDK_VERSION_PATCH,
-)
-
-field = ReqSessionCreatePb.DESCRIPTOR.fields_by_name.get("sdk_version")
-if field is None:
-    raise SystemExit(
-        "generated ipc_pb2.py is stale: ReqSessionCreatePb.sdk_version is missing"
-    )
-
-req = ReqSessionCreatePb()
-req.sdk_version.major = SDK_VERSION_MAJOR
-req.sdk_version.minor = SDK_VERSION_MINOR
-req.sdk_version.patch = SDK_VERSION_PATCH
-
-wire = req.SerializeToString()
-parsed = ReqSessionCreatePb()
-parsed.ParseFromString(wire)
-if not parsed.HasField("sdk_version"):
-    raise SystemExit("generated Python protobuf failed sdk_version presence round-trip")
-if (
-    parsed.sdk_version.major != SDK_VERSION_MAJOR
-    or parsed.sdk_version.minor != SDK_VERSION_MINOR
-    or parsed.sdk_version.patch != SDK_VERSION_PATCH
-):
-    raise SystemExit("generated Python protobuf failed sdk_version value round-trip")
-
-print(
-    "Validated Python SDK session version payload: "
-    f"{SDK_VERSION_MAJOR}.{SDK_VERSION_MINOR}.{SDK_VERSION_PATCH}"
-)
-PY
-}
-
 main() {
     local build_type="Debug"
 
@@ -106,23 +67,14 @@ main() {
         shift
     done
 
-    mkdir -p "${PROTO_PY_DIR}"
-
-    # Generated Python files are build products. Remove them first so a copied
-    # repository cannot accidentally reuse stale files from another SDK revision.
-    clean_generated_python
-
     echo "Configuring ${SDK_TARGET} (${build_type})"
     cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
         -DCMAKE_BUILD_TYPE="${build_type}"
 
-    # kavio_device_sdk_package depends on kavio_sdk, and kavio_sdk depends on
-    # kavio_sdk_proto_py. One target therefore builds C++, regenerates Python
-    # artifacts and refreshes KavioDeviceSdkConfig.cmake on every SDK build.
+    # The package target builds the C++ library and Python protobuf artifacts
+    # independently; CMake only regenerates bindings when their inputs change.
     echo "Building complete Device SDK"
     cmake --build "${BUILD_DIR}" --target "${SDK_TARGET}" -j"$(nproc)"
-
-    validate_generated_python_sdk
 
     echo "Build completed"
     echo "Build type: ${build_type}"

@@ -14,9 +14,15 @@
 
 #include <stdint.h>
 
+// SDK version: used for client / Platform IPC compatibility.
 #define KAVIO_SDK_VERSION_MAJOR 3
 #define KAVIO_SDK_VERSION_MINOR 0
 #define KAVIO_SDK_VERSION_PATCH 0
+
+// Public App package / configuration format versions.
+// Shared by the packaging tools, Platform and Windows host.
+#define KAVIO_MANIFEST_VERSION 1U
+#define KAVIO_CONFIG_DEFINITION_VERSION "2.0"
 
 #define KAVIO_SDK_STRINGIFY_IMPL(value) #value
 #define KAVIO_SDK_STRINGIFY(value) KAVIO_SDK_STRINGIFY_IMPL(value)

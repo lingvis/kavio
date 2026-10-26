@@ -20,7 +20,8 @@ import mmap
 import os
 from typing import Optional, Tuple
 
-from .types import PixelFormat, Rect, ShmType, Status, StatusCode, StatusError
+from .types import PixelFormat, Rect, Status, StatusCode, StatusError
+from . import _atomic
 
 # Constants matching C++ kavio::kShmMagic and kShmBufferCount
 K_SHM_MAGIC = 0x56495348
@@ -262,7 +263,6 @@ class FrameShm:
                 return None
 
             self._atomic_fetch_add_u32(self._field_ptr(meta, 'read_in_progress'), 1)
-            self._atomic_thread_fence_acquire()
 
             index_after_ref = self._atomic_load_u32(self._field_ptr(self._header, 'published_index'))
             if index_after_ref != index or self._atomic_load_u32(self._field_ptr(meta, 'valid')) == 0:
@@ -293,6 +293,10 @@ class FrameShm:
                 pixel_format = PixelFormat(pixel_format_value)
             except ValueError:
                 pixel_format = PixelFormat.UNKNOWN
+
+            if payload_size > self._payload_capacity or height > self._header.height:
+                self._atomic_fetch_sub_u32(self._field_ptr(meta, 'read_in_progress'), 1)
+                return None
 
             return ReadView(
                 index=index,
@@ -388,7 +392,6 @@ class FrameShm:
         meta.valid = 1
 
         self._atomic_fetch_add_u32(self._field_ptr(meta, 'write_seq'), 1)
-        self._atomic_thread_fence_release()
         self._atomic_store_u32(self._field_ptr(self._header, 'published_index'), index)
         return True
 
@@ -521,69 +524,39 @@ class FrameShm:
             return -1
         return writable
 
-    # --- Atomic operations using ctypes and mmap memory ---
-
+    # All cross-process synchronization uses libatomic with GCC-compatible
+    # acquire/release semantics. In particular, reference increments are
+    # atomic RMW operations; a plain ctypes increment is not safe here.
     @staticmethod
     def _field_ptr(struct_instance, field_name: str):
-        """Get a ctypes pointer to a field of a ctypes Structure instance.
-
-        In Python ctypes, accessing a Structure field (e.g. obj.field) returns
-        the Python value (e.g. an int), not a ctypes object. This helper
-        computes the byte offset of the field and returns a pointer to it
-        within the structure's memory.
-        """
-        # Get the field offset from the structure's layout
-        for fname, ftype in struct_instance._fields_:
-            if fname == field_name:
-                offset = getattr(struct_instance.__class__, fname).offset
-                addr = ctypes.addressof(struct_instance) + offset
-                return ctypes.cast(addr, ctypes.POINTER(ftype))
-        raise ValueError(f"Field '{field_name}' not found in {type(struct_instance).__name__}")
+        offset = getattr(struct_instance.__class__, field_name).offset
+        return ctypes.c_void_p(ctypes.addressof(struct_instance) + offset)
 
     @staticmethod
-    def _atomic_load_u32(ptr) -> int:
-        """Atomically load a uint32_t from shared memory."""
-        return ptr.contents.value
+    def _atomic_load_u32(ptr):
+        return _atomic.load_u32(ptr)
 
     @staticmethod
-    def _atomic_store_u32(ptr, value: int):
-        """Atomically store a uint32_t to shared memory."""
-        ptr.contents.value = value
+    def _atomic_store_u32(ptr, value):
+        _atomic.store_u32(ptr, value)
 
     @staticmethod
-    def _atomic_load_s32(ptr) -> int:
-        """Atomically load an int32_t from shared memory."""
-        v = ptr.contents.value
-        if v >= 0x80000000:
-            v -= 0x100000000
-        return v
+    def _atomic_load_s32(ptr):
+        value = _atomic.load_u32(ptr)
+        return value if value < 0x80000000 else value - 0x100000000
 
     @staticmethod
-    def _atomic_load_u64(ptr) -> int:
-        """Atomically load a uint64_t from shared memory."""
-        return ptr.contents.value
+    def _atomic_load_u64(ptr):
+        return _atomic.load_u64(ptr)
 
     @staticmethod
-    def _atomic_fetch_add_u32(ptr, value: int):
-        """Atomically add to a uint32_t."""
-        ptr.contents.value += value
+    def _atomic_fetch_add_u32(ptr, value):
+        return _atomic.fetch_add_u32(ptr, value)
 
     @staticmethod
-    def _atomic_fetch_sub_u32(ptr, value: int):
-        """Atomically subtract from a uint32_t."""
-        ptr.contents.value -= value
+    def _atomic_fetch_sub_u32(ptr, value):
+        return _atomic.fetch_sub_u32(ptr, value)
 
-    @staticmethod
-    def _atomic_thread_fence_release():
-        """Release fence - ensures all prior writes are visible."""
-        # In Python, we rely on the GIL and mmap flush for ordering.
-        # For cross-process, we use msync.
-        pass
-
-    @staticmethod
-    def _atomic_thread_fence_acquire():
-        """Acquire fence - ensures all subsequent reads see latest writes."""
-        pass
 
 
 class ReadView:

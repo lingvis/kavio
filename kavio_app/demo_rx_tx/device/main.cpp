@@ -67,12 +67,17 @@ Demo 工作流程：
 */
 
 #ifndef KAVIO_DEMO_RX_POLL_INTERVAL_MS
+// 33ms 是本 Demo 主动拉取 RX 最新帧的近似周期（约 30 次/秒），
+// 不是 Platform VENC 的编码帧率，也不影响 RX 原始输入节奏。
 #define KAVIO_DEMO_RX_POLL_INTERVAL_MS 33
 #endif
 
 
 namespace {
 
+// 以下 Badge 速度、尺寸、数量及圆角只决定两个演示 TX 图层的视觉效果。
+// 速度是每次状态更新的位移基数，不是 SDK 的图层更新限速。
+// 两个图层用于演示多图层叠放和独立 SHM 资源生命周期。
 constexpr float kDemoBadgeSpeedPx = 7.0f;
 constexpr int kDemoLabelCount = 2;
 constexpr int kDemoBadgeBaseWidth = 320;
@@ -121,13 +126,15 @@ std::atomic<bool> g_stop{false};
 DemoBadgeState g_demo_badge_state;
 DemoBadgeState g_demo_badge_state_aux;
 
+// 交互输入：50ms 等待用于降低终端空闲轮询；10ms 用于收齐转义序列尾部。
+// 鼠标步长 40px 和默认 1920x1080 是终端演示操作参数，不代表真实屏幕分辨率。
+// 实际 RX 边界可用时应以 GetRxInfo() 更新鼠标活动范围。
 constexpr int kInteractiveInputPollMs = 50;
 constexpr int kInteractiveSequenceTailPollMs = 10;
 constexpr int kInteractiveMouseStepPx = 40;
 constexpr int kInteractiveMouseDefaultWidth = 1920;
 constexpr int kInteractiveMouseDefaultHeight = 1080;
 constexpr size_t kInteractiveEscapeMaxBytes = 16;
-constexpr auto kDemoRequestTimeout = std::chrono::seconds(2);
 
 enum class TerminalActionKind {
     kNone,
@@ -143,6 +150,7 @@ struct TerminalAction {
     int32_t mouse_dy = 0;
 };
 
+// RAII 维护非规范终端输入；退出时恢复 termios，避免 Demo 异常结束后终端回显失效。
 class TerminalInputGuard {
 public:
     bool Enable(int fd, std::string* error) {
@@ -357,12 +365,15 @@ PointF RandomInboundDirection(std::mt19937& rng,
     return NormalizeVector(fallback);
 }
 
+// 取 RX 尺寸的约 1/4 宽、1/8 高，但限制为 220~320 和 72~104，
+// 目的在于小分辨率下仍可读，大分辨率下不让 Badge 无限放大。
 Size GetDemoBadgeSize(const Size& frame_size) {
     const int width = std::min(kDemoBadgeBaseWidth, std::max(220, frame_size.width / 4));
     const int height = std::min(kDemoBadgeBaseHeight, std::max(72, frame_size.height / 8));
     return Size{width, height};
 }
 
+// 根据 RX 帧大小限制 Badge 尺寸，防止在小分辨率下遮挡整张画面。
 void ResetDemoBadgeState(DemoBadgeState& state, const Size& frame_size) {
     state.initialized = true;
     state.frame_width = frame_size.width;
@@ -375,6 +386,7 @@ void ResetDemoBadgeState(DemoBadgeState& state, const Size& frame_size) {
     state.velocity = RandomUnitVector(state.rng) * kDemoBadgeSpeedPx;
 }
 
+// 每次更新先计算合法活动区域再反弹；不依赖固定输入分辨率。
 void AdvanceDemoBadgeState(DemoBadgeState& state,
                            const Size& frame_size,
                            const Size& badge_size) {
@@ -441,6 +453,7 @@ void SetBgraPixel(kavio::ImageFrame& image, int x, int y, const BgraColor& color
     image.data[offset + 3] = color.a;
 }
 
+// BGRA8888 软件绘制演示：valid_rect/dest_pos 与完整 TX 画布是两套坐标语义。
 void DrawBadgeCanvas(kavio::ImageFrame& image,
                      uint64_t tick,
                      const BgraColor& fill_color) {
@@ -525,6 +538,8 @@ struct DemoTxLayer {
 };
 
 
+// FSM 将连接准备、异步图层 Setup、主循环和清理拆开：
+// 提交 IPC 创建请求之后必须等待 OnMessage 的创建结果，不能直接转入 Running。
 enum FSM_State {
     FSM_State_Start = 0,
     FSM_State_WaitClientReady,
@@ -577,6 +592,7 @@ struct FSMEventPayload {
     explicit FSMEventPayload(FSM_Event t = FSM_Event_None) : type(t) {}
 };
 
+// 单线程消费 FSM 事件，OnMessage 只投递事件以减少 IPC 派发线程中的状态机重入。
 class FiniteStateMachine {
 public:
     struct StateHooks {
@@ -706,6 +722,7 @@ private:
     std::deque<FSMEventPayload> events_;
 };
 
+// 长等待分成 20ms 片段，以便 Ctrl+C/终止信号能及时退出。
 bool SleepWithStopCheck(std::chrono::milliseconds duration,
                         const std::atomic<bool>* local_stop = nullptr) {
     constexpr auto kSlice = std::chrono::milliseconds(20);
@@ -724,11 +741,13 @@ bool SleepWithStopCheck(std::chrono::milliseconds duration,
     return !g_stop.load() && !(local_stop && local_stop->load());
 }
 
+// 使用单调时钟生成输入事件时间戳；不要用系统日历时间以免时间跳变。
 uint64_t NowNs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+// 把终端 ASCII 字符映射到协议物理按键；需要 Shift 的符号另行标记。
 bool MapAsciiToKey(char ch,
                    kavio::input::proto::InputKeyCodePb* key_code,
                    bool* needs_shift) {
@@ -797,6 +816,7 @@ bool MapAsciiToKey(char ch,
     }
 }
 
+// 仅用于诊断不可识别的终端转义字节，不作为输入协议数据。
 std::string BytesToHex(const std::string& bytes) {
     static constexpr char kHex[] = "0123456789ABCDEF";
     std::string out;
@@ -812,6 +832,7 @@ std::string BytesToHex(const std::string& bytes) {
     return out;
 }
 
+// 普通方向键模拟键盘方向键；Ctrl+方向键用于演示固定步长鼠标移动。
 bool ParseArrowKey(char final_byte, bool ctrl_modifier, TerminalAction* action) {
     if (!action) {
         return false;
@@ -841,6 +862,7 @@ bool ParseArrowKey(char final_byte, bool ctrl_modifier, TerminalAction* action) 
     }
 }
 
+// 从 ANSI CSI 转义序列解析修饰键，避免把多字节方向键误当作普通字符。
 bool ParseCsiModifier(const std::string& params, int* modifier) {
     if (!modifier || params.empty()) {
         return false;
@@ -1113,6 +1135,7 @@ bool SendKeyPress(kavio::KavioClient& client,
     return true;
 }
 
+// 一份 RX 图像驱动两个独立 TX 图层：每个图层各自构造 BGRA 和 WriteFrame。
 void ProcessFrameAndOverlay(std::vector<DemoTxLayer>& tx_layers,
                             const kavio::ImageFrame& frame,
                             uint64_t tick,
@@ -1137,28 +1160,24 @@ void ProcessFrameAndOverlay(std::vector<DemoTxLayer>& tx_layers,
               << " size=" << frame.width << "x" << frame.height << std::endl;
 }
 
+// 开启 RX 原始帧、sample_interval=1 表示演示每帧可读；QueryStats 异步返回，不阻塞启动流程。
 bool SendInitialRequests(kavio::KavioClient& client) {
-    kavio::RxParams rx_params;
-    rx_params.enabled = true;
-    rx_params.frame_sample_interval = 1;
-    auto enable_status = client.SetRxParams(rx_params, kDemoRequestTimeout);
-    if (!enable_status.ok()) {
-        std::cerr << "SetRxParams failed: " << enable_status.message << std::endl;
+    kavio::ipc::proto::RxParamsPb rx_params;
+    rx_params.set_enabled(true);
+    rx_params.set_frame_sample_interval(1);
+    uint64_t request_id = 0;
+    auto st = client.SetRxParams(rx_params, request_id);
+    if (!st.ok()) {
+        std::cerr << "SetRxParams submit failed: " << st.message << std::endl;
         return false;
     }
-    std::cout << "SetRxParams succeeded" << std::endl;
-
-    kavio::KavioClient::StatsReply reply;
-    auto stats_status = client.QueryStats(reply, kDemoRequestTimeout);
-    if (!stats_status.ok()) {
-        std::cerr << "QueryStats failed: " << stats_status.message << std::endl;
+    st = client.QueryStats(request_id);
+    if (!st.ok()) {
+        std::cerr << "QueryStats submit failed: " << st.message << std::endl;
         return false;
     }
-
-    PrintStatsReply(reply);
     return true;
 }
-
 
 bool ToRxAvailable(const kavio::RxInfo& rx_info) {
     return rx_info.frame_available;
@@ -1174,13 +1193,16 @@ bool RxInfoEqual(const kavio::RxInfo& lhs, const kavio::RxInfo& rhs) {
 }
 
 // 主状态机负责 session 生命周期；SDK 回调只投递事件/更新原子状态，不在回调里做重业务。
-class KavioDemoApp {
+class KavioDemoApp : public kavio::IClientMessageHandler {
 public:
+    // 初始只启用 TX：先完成会话协商和两个图层的异步 Setup，
+    // 再通过 SetRxParams() 打开 RX 原始帧，避免在 Setup 阶段持续复制 RX 图像。
     KavioDemoApp() {
-        session_options_.client_name = "kavio_demo";
-        session_options_.client_pid = static_cast<int32_t>(::getpid());
-        session_options_.rx_params.enabled = false;
-        session_options_.tx_params.enabled = true;
+        session_options_.set_client_name("kavio_demo");
+        session_options_.set_client_pid(static_cast<int32_t>(::getpid()));
+        session_options_.mutable_rx_params()->set_enabled(false);
+        session_options_.mutable_rx_params()->set_frame_sample_interval(1);
+        session_options_.mutable_tx_params()->set_enabled(true);
     }
 
     void InitFsm() {
@@ -1263,6 +1285,83 @@ private:
         fsm_.RegisterTransition(FSM_State_Cleanup, FSM_Event_CleanupDone, FSM_State_Exit);
     }
 
+    // 断线会使旧 Session 的 SHM 失效；旧 Setup 不能继续接受迟到回复。
+    void OnDisconnected() override {
+        tx_setup_active_.store(false);
+        rx_available_.store(false, std::memory_order_release);
+        std::cout << "[CLIENT] state=" << ClientAvailabilityName(false) << std::endl;
+        fsm_.PostEvent(FSM_Event_ClientInvalid);
+    }
+
+    // TX SHM 创建成功仅代表 Platform 已分配资源：此处需明确 OpenTxSurface。
+    // 收齐两个图层才 PostEvent(SetupOk)；打开失败通过 SetupFailed 清理。
+    // OnMessage 属于 SDK 单派发线程，不能据此推断 FSM 主线程已经切换状态。
+    void OnMessage(const kavio::ipc::proto::IPCPackagePb& msg) override {
+        namespace ip = kavio::ipc::proto;
+        if (msg.header().msg_type() == ip::MSG_P2A_RSP_CREATE_TX_SHM &&
+            msg.payload().has_p2a_rsp_create_tx_shm() && tx_setup_active_.load()) {
+            const auto& info = msg.payload().p2a_rsp_create_tx_shm().tx_shm();
+            kavio::TxSurface surface;
+            auto st = client_.OpenTxSurface(info, surface);
+            if (!st.ok()) {
+                std::cerr << "OpenTxSurface failed: " << st.message << std::endl;
+                uint64_t id = 0;
+                client_.DestroyTxSurface(info.id(), id);
+                tx_setup_active_.store(false);
+                fsm_.PostEvent(FSM_Event_SetupFailed);
+                return;
+            }
+            const size_t index = demo_layers_.size();
+            if (index >= kDemoLabelCount) return;
+            demo_layers_.emplace_back();
+            auto& layer = demo_layers_.back();
+            layer.tx_surface = std::move(surface);
+            layer.badge_state = index == 0 ? &g_demo_badge_state : &g_demo_badge_state_aux;
+            layer.fill_color = index == 0 ? BgraColor{48, 178, 255, 150}
+                                         : BgraColor{255, 174, 54, 150};
+            if (demo_layers_.size() == kDemoLabelCount) {
+                tx_setup_active_.store(false);
+                fsm_.PostEvent(FSM_Event_SetupOk);
+            }
+            return;
+        }
+        if (msg.header().msg_type() == ip::MSG_P2A_RSP_ERROR && msg.payload().has_p2a_rsp_error() &&
+            msg.payload().p2a_rsp_error().failed_for() == ip::MSG_A2P_REQ_CREATE_TX_SHM &&
+            tx_setup_active_.exchange(false)) {
+            std::cerr << "CreateTxSurface failed: " << msg.payload().p2a_rsp_error().message() << std::endl;
+            fsm_.PostEvent(FSM_Event_SetupFailed);
+            return;
+        }
+            switch (msg.header().msg_type()) {
+            case ip::MSG_P2A_RSP_CREATE_SESSION:
+                std::cout << "[CLIENT] state=" << ClientAvailabilityName(true) << std::endl;
+                fsm_.PostEvent(FSM_Event_ClientReady);
+                break;
+            case ip::MSG_P2A_RSP_RUNTIME_DATA:
+            case ip::MSG_P2A_NTF_RUNTIME_DATA:
+                PrintRuntimeData(client_.GetRuntimeData());
+                // fall through, RX state may have changed.
+            case ip::MSG_P2A_NTF_RX_SHM_READY:
+            case ip::MSG_P2A_NTF_RX_SHM_INVALIDATED: {
+                const auto next = client_.GetRxInfo();
+                const bool available = ToRxAvailable(next);
+                rx_available_.store(available, std::memory_order_release);
+                UpdateInteractiveMouseBounds(next.width, next.height);
+                break;
+            }
+            case ip::MSG_P2A_RSP_QUERY_STATS:
+                if (msg.payload().has_p2a_rsp_query_stats())
+                    PrintStatsReply(msg.payload().p2a_rsp_query_stats());
+                break;
+            case ip::MSG_P2A_RSP_ERROR:
+                if (msg.payload().has_p2a_rsp_error())
+                    std::cerr << "[IPC] request failed: " << msg.payload().p2a_rsp_error().message() << std::endl;
+                break;
+            default: break;
+            }
+
+    }
+
     void OnStartEnter() {
         std::cout << "============================================================\n"
                   << "Kavio KavioClient Demo\n"
@@ -1271,36 +1370,7 @@ private:
                   << "============================================================"
                   << std::endl;
 
-        kavio::KavioClient::Callbacks callbacks;
-        callbacks.on_client_ready = [this]() {
-            std::cout << "[CLIENT] state=" << ClientAvailabilityName(true) << std::endl;
-            fsm_.PostEvent(FSM_Event_ClientReady);
-        };
-        callbacks.on_client_invalid = [this]() {
-            rx_available_.store(false, std::memory_order_release);
-            std::cout << "[CLIENT] state=" << ClientAvailabilityName(false) << std::endl;
-            fsm_.PostEvent(FSM_Event_ClientInvalid);
-        };
-        callbacks.on_runtime_changed = [](const kavio::KavioClient::RuntimeData& runtime_data) {
-            PrintRuntimeData(runtime_data);
-        };
-        callbacks.on_rx_changed = [this](const kavio::RxInfo& prev, const kavio::RxInfo& next) {
-            const bool prev_available = ToRxAvailable(prev);
-            const bool next_available = ToRxAvailable(next);
-
-            if (prev_available != next_available || !RxInfoEqual(prev, next)) {
-                std::cout << "[RX] available=" << (next_available ? "true" : "false")
-                          << " connected=" << (next.connected ? "true" : "false")
-                          << " frame_available=" << (next.frame_available ? "true" : "false")
-                          << " size=" << next.width << "x" << next.height
-                          << " stride=" << next.stride << std::endl;
-            }
-
-            rx_available_.store(next_available, std::memory_order_release);
-            UpdateInteractiveMouseBounds(next.width, next.height);
-        };
-
-        auto st = client_.Start(session_options_, callbacks);
+        auto st = client_.Start(session_options_, *this);
         if (!st.ok()) {
             std::cerr << "Start failed: " << st.message << std::endl;
             fsm_.PostEvent(FSM_Event_SetupFailed);
@@ -1312,6 +1382,7 @@ private:
     }
 
     void OnWaitClientReadyEnter() {
+        tx_setup_active_.store(false);
         ClearSessionResources(false);
         StopInteractiveInput();
         ResetInteractiveMouseState();
@@ -1329,55 +1400,41 @@ private:
     void OnWaitClientReadyExit() {
     }
 
-    // Setup 中调用的接口都依赖 ClientReady，且部分接口会同步等待 Platform ACK。
+    // Setup 提交异步创建请求；OnMessage 完成 SHM 打开并通知 FSM。
+    // 异步创建两个相同大小但各自独立的 TX Surface；成功事件由 OnMessage 汇总。
     void OnSetupEnter() {
-        std::cout << "[FSM] setup: enable RX, query stats, create two TX surfaces" << std::endl;
-
+        std::cout << "[FSM] setup: async RX, stats and two TX surfaces" << std::endl;
         if (!client_.IsClientReady()) {
             fsm_.PostEvent(FSM_Event_ClientInvalid);
             return;
         }
-
         if (!SendInitialRequests(client_)) {
             fsm_.PostEvent(FSM_Event_SetupFailed);
             return;
         }
-
         const auto initial_runtime = client_.GetRuntimeData();
-    UpdateInteractiveMouseBounds(initial_runtime.rx_info().width(), initial_runtime.rx_info().height());
+        if (initial_runtime.has_rx_info())
+            UpdateInteractiveMouseBounds(initial_runtime.rx_info().width(),
+                                         initial_runtime.rx_info().height());
         const Size demo_badge_size = GetInitialTxSurfaceSize(initial_runtime);
-        std::cout << "CreateTxSurface size=" << demo_badge_size.width << "x" << demo_badge_size.height
-                  << std::endl;
-
         demo_layers_.clear();
         demo_layers_.reserve(kDemoLabelCount);
+        tx_setup_active_.store(true);
         for (int index = 0; index < kDemoLabelCount; ++index) {
-            kavio::TxSurface surface;
-            auto create_status = client_.CreateTxSurface(static_cast<uint32_t>(demo_badge_size.width),
-                                                         static_cast<uint32_t>(demo_badge_size.height),
-                                                         surface,
-                                                         kDemoRequestTimeout);
-            if (!create_status.ok()) {
-                std::cerr << "CreateTxSurface failed: " << create_status.message << std::endl;
+            uint64_t id = 0;
+            auto st = client_.CreateTxSurface(
+                static_cast<uint32_t>(demo_badge_size.width),
+                static_cast<uint32_t>(demo_badge_size.height), id);
+            if (!st.ok()) {
+                std::cerr << "CreateTxSurface submit failed: " << st.message << std::endl;
+                tx_setup_active_.store(false);
                 fsm_.PostEvent(FSM_Event_SetupFailed);
                 return;
             }
-
-            demo_layers_.emplace_back();
-            auto& layer = demo_layers_.back();
-            layer.tx_surface = std::move(surface);
-            layer.badge_state = index == 0 ? &g_demo_badge_state : &g_demo_badge_state_aux;
-            layer.fill_color = index == 0 ? BgraColor{48, 178, 255, 150}
-                                          : BgraColor{255, 174, 54, 150};
-
-            std::cout << "CreateTxSurface ok, shm_id=" << layer.tx_surface.id()
-                      << " size=" << layer.tx_surface.width() << "x" << layer.tx_surface.height()
-                      << std::endl;
         }
-
-        fsm_.PostEvent(FSM_Event_SetupOk);
     }
 
+    // Running 重新初始化读取节奏与 frame_id，避免重连后继续沿用旧会话帧号。
     void OnRunningEnter() {
         tick_ = 0;
         last_processed_frame_id_ = 0;
@@ -1387,6 +1444,7 @@ private:
     }
 
     // RX 没有逐帧回调；Running 按固定间隔主动读取“最新帧”，并用 frame_id 去重。
+    // 按配置间隔拉取 RX 最新帧；相同 frame_id 不重复绘制，防止空转刷新。
     void OnRunningLoop() {
         if (!rx_available_.load(std::memory_order_acquire)) {
             return;
@@ -1426,8 +1484,10 @@ private:
         StopInteractiveInput();
     }
 
-    // session 已失效时旧 TX Surface 已经无意义，不能再对旧 session 做阻塞 Destroy。
+    // session 失效后旧 TX Surface 已无效；异步销毁只在 Session 可用时提交。
+    // 仅在 Session 仍有效时发送异步远端清理；断线后旧 SHM 自动不可再使用。
     void OnCleanupEnter() {
+        tx_setup_active_.store(false);
         g_stop.store(true);
         StopInteractiveInput();
 
@@ -1523,6 +1583,7 @@ private:
         return true;
     }
 
+    // 将解析出的终端动作映射为设备输入事件，业务发送失败在此直接反馈。
     bool DispatchInteractiveAction(const TerminalAction& action) {
         switch (action.kind) {
         case TerminalActionKind::kKeyPress:
@@ -1542,6 +1603,7 @@ private:
         }
     }
 
+    // 终端交互独立于 TX 绘制：按键事件按协议即时提交而不等待远端应答。
     void RunInteractiveInput() {
         TerminalInputGuard terminal_guard;
         std::string enable_error;
@@ -1601,7 +1663,8 @@ private:
                               << ": " << clear_st.message << std::endl;
                 }
 
-                auto destroy_st = layer.tx_surface.Destroy(kDemoRequestTimeout);
+                uint64_t destroy_request_id = 0;
+                auto destroy_st = layer.tx_surface.Destroy(destroy_request_id);
                 if (!destroy_st.ok()) {
                     std::cerr << "Destroy failed for shm_id=" << layer.tx_surface.id()
                               << ": " << destroy_st.message << std::endl;
@@ -1613,8 +1676,8 @@ private:
     }
 
 private:
-    kavio::KavioClient client_;
-    kavio::SessionOptions session_options_;
+    std::atomic<bool> tx_setup_active_{false};
+    kavio::ipc::proto::A2PReqCreateSessionPb session_options_;
     FiniteStateMachine fsm_;
 
     std::atomic<bool> rx_available_{false};
@@ -1632,6 +1695,9 @@ private:
     int32_t mouse_x_ = kInteractiveMouseDefaultWidth / 2;
     int32_t mouse_y_ = kInteractiveMouseDefaultHeight / 2;
     bool mouse_position_ready_ = false;
+
+    // Last member: destroy SDK and join its dispatch thread before FSM and App state.
+    kavio::KavioClient client_;
 };
 
 } // namespace

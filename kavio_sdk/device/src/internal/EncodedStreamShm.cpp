@@ -67,32 +67,36 @@ EncodedPacketWriteResult EncodedStreamShm::WritePacket(const void* data,
                                                        uint64_t timestamp_ns,
                                                        uint32_t flags,
                                                        uint32_t nal_type) {
+    std::lock_guard<std::mutex> writer_lock(writer_mutex_);
     EncodedPacketWriteResult result;
-    if (!IsWritable() || !IsValid() || data == nullptr || size == 0 ||
-        size > header_->payload_capacity) {
-        return result;
-    }
-
-    // Current encoded stream is H264 Annex-B with 4-byte start code.
-    if (EncodedAtomicLoadU32(&header_->codec) == 1 &&
-        !EncodedPacketIsH264StreamData(static_cast<const uint8_t*>(data), size)) {
-        return result;
-    }
+    if (!IsWritable() || !IsValid() || !data || size == 0 ||
+        size > header_->payload_capacity) return result;
+    if (header_->codec == 1 &&
+        !EncodedPacketIsH264StreamData(static_cast<const uint8_t*>(data), size)) return result;
 
     uint32_t offset = EncodedAtomicLoadU32(&header_->payload_write_offset);
-    if (offset + size > header_->payload_capacity) {
-        offset = 0;
-    }
-
-    const uint64_t seq = EncodedAtomicFetchAddU64(&header_->write_seq, 1) + 1;
+    if (static_cast<uint64_t>(offset) + size > header_->payload_capacity) offset = 0;
+    const uint64_t seq = EncodedAtomicLoadU64(&header_->write_seq) + 1;
     const uint32_t index = static_cast<uint32_t>(seq % header_->packet_capacity);
     EncodedPacketMeta* meta = packets_ + index;
 
+    // A packet can be overwritten by *payload* wrap long before its metadata
+    // slot is recycled. Invalidate every overlapping slot before copying bytes.
+    const uint64_t epoch = EncodedAtomicLoadU64(&header_->reserved0);
+    EncodedAtomicStoreU64(&header_->reserved0, (epoch & ~uint64_t(1)) + 1);
+    for (uint32_t i = 0; i < header_->packet_capacity; ++i) {
+        auto& old = packets_[i];
+        if (i == index || EncodedAtomicLoadU32(&old.valid) == 0) continue;
+        const uint64_t old_end = static_cast<uint64_t>(old.offset) + old.size;
+        const uint64_t new_end = static_cast<uint64_t>(offset) + size;
+        if (static_cast<uint64_t>(old.offset) < new_end &&
+            static_cast<uint64_t>(offset) < old_end) {
+            EncodedAtomicStoreU32(&old.valid, 0);
+        }
+    }
     EncodedAtomicStoreU32(&meta->writing, 1);
     EncodedAtomicStoreU32(&meta->valid, 0);
-
     std::memcpy(payload_ + offset, data, size);
-
     meta->seq = seq;
     meta->pts_us = pts_us;
     meta->dts_us = dts_us;
@@ -101,14 +105,12 @@ EncodedPacketWriteResult EncodedStreamShm::WritePacket(const void* data,
     meta->size = size;
     meta->flags = flags;
     meta->nal_type = nal_type;
-
-    EncodedAtomicThreadFenceRelease();
     EncodedAtomicStoreU32(&meta->valid, 1);
     EncodedAtomicStoreU32(&meta->writing, 0);
-
     EncodedAtomicStoreU32(&header_->write_index, index);
     EncodedAtomicStoreU32(&header_->payload_write_offset, offset + size);
-
+    EncodedAtomicStoreU64(&header_->write_seq, seq);
+    EncodedAtomicStoreU64(&header_->reserved0, (epoch & ~uint64_t(1)) + 2);
     result.ok = true;
     result.seq = seq;
     result.index = index;
@@ -122,19 +124,19 @@ Status EncodedStreamShm::ReadPacket(uint64_t seq, EncodedPacket& out_packet) con
     if (!IsValid() || seq == 0) {
         return Status::Error(StatusCode::Common_InvalidState, "encoded stream shm is not valid");
     }
-
+    const uint64_t start_epoch = EncodedAtomicLoadU64(&header_->reserved0);
+    if (start_epoch & 1U) {
+        return Status::Error(StatusCode::Media_NoFrame, "encoded stream is being updated");
+    }
     const uint32_t packet_capacity = EncodedAtomicLoadU32(&header_->packet_capacity);
     const uint32_t payload_capacity = EncodedAtomicLoadU32(&header_->payload_capacity);
     const uint32_t index = static_cast<uint32_t>(seq % packet_capacity);
     const EncodedPacketMeta* meta = packets_ + index;
-
     if (EncodedAtomicLoadU32(&meta->writing) != 0 ||
         EncodedAtomicLoadU32(&meta->valid) == 0) {
         return Status::Error(StatusCode::Media_NoFrame, "encoded packet is not ready");
     }
-
     EncodedAtomicThreadFenceAcquire();
-
     EncodedPacket snapshot;
     snapshot.seq = meta->seq;
     snapshot.pts_us = meta->pts_us;
@@ -144,24 +146,22 @@ Status EncodedStreamShm::ReadPacket(uint64_t seq, EncodedPacket& out_packet) con
     snapshot.nal_type = meta->nal_type;
     const uint32_t offset = meta->offset;
     const uint32_t size = meta->size;
-
     if (snapshot.seq != seq) {
         return Status::Error(StatusCode::Media_NoFrame, "encoded packet has been overwritten");
     }
-    if (size == 0 || offset >= payload_capacity || offset + size > payload_capacity) {
+    if (size == 0 || offset >= payload_capacity ||
+        static_cast<uint64_t>(offset) + size > payload_capacity) {
         return Status::Error(StatusCode::SHM_OperationFailed, "encoded packet payload is invalid");
     }
-
     snapshot.data.resize(size);
     std::memcpy(snapshot.data.data(), payload_ + offset, size);
-
     EncodedAtomicThreadFenceAcquire();
-    if (EncodedAtomicLoadU32(&meta->writing) != 0 ||
+    if (start_epoch != EncodedAtomicLoadU64(&header_->reserved0) ||
+        EncodedAtomicLoadU32(&meta->writing) != 0 ||
         EncodedAtomicLoadU32(&meta->valid) == 0 ||
         meta->seq != seq) {
         return Status::Error(StatusCode::Media_NoFrame, "encoded packet changed while reading");
     }
-
     out_packet = std::move(snapshot);
     return Status::Ok();
 }
@@ -369,6 +369,7 @@ bool EncodedStreamShm::InitializeLayout(uint32_t session_id,
     header_->payload_capacity = payload_capacity;
     header_->total_shm_size = total_size;
     header_->write_seq = 0;
+    header_->reserved0 = 0;
     header_->write_index = 0;
     header_->payload_write_offset = 0;
     return true;

@@ -16,9 +16,5 @@
     "directory": "host",
     "binary": "host.dll",
     "panel": false
-  },
-  "config": {
-    "definition": "config/definition.json",
-    "default": "config/default.json"
   }
 }

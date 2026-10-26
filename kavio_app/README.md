@@ -32,7 +32,11 @@ Device Component 可以按业务需要使用：
 - TX：创建并更新输出 Surface；
 - Input：发送键盘、鼠标等输入事件；
 - USB Channel：与 Windows Host Component 双向交换 App 自定义数据；
-- App Configuration：接收和保存 App 配置。
+- App Configuration：通过 SDK 查询、修改完整 JSON 配置。
+
+C++ Demo 使用 `IClientMessageHandler::OnMessage()` 接收 protobuf 消息。业务请求异步提交，
+以 `track_id` 关联响应；收到 TX 创建成功消息后再打开本地共享内存。Python Demo 使用 Python SDK 的
+`on_message()`。App 需要自行处理业务超时，不应在消息回调中阻塞等待另一条响应。
 
 ### Host Component
 
@@ -59,15 +63,15 @@ USB Channel 是双向消息通道，业务协议由 App 自己定义。常见做
 <app>/common/
 ```
 
-Native Device API 中对应 `SendCommChannelData`、`on_comm_channel_data` 等接口；Host API 中通过 `send` 和 `KavioHostOnData` 收发数据。Python Demo 对这些接口做了轻量封装。
+Native Device API 中对应 `SendCommChannelData`、`OnMessage(MSG_P2A_DATA_COMM_CHANNEL)` 等接口；Host API 中通过 `send` 和 `KavioHostOnData` 收发数据。Python Demo 对这些接口做了轻量封装。
 
 App 开发只需要围绕 USB Channel 设计自己的消息协议，不需要处理底层 USB 传输细节。
 
 ### App Configuration 与 App Panel
 
-两者都是可选能力，并且相互独立：
+App Configuration 的配置项与 App Panel 都是可选能力，且相互独立；但 `schema_description.json` 文件是必需的，无配置时内容为 `{}`：
 
-- **App Configuration**：通过 `package/config/definition.json` 描述标准配置项，由 Kavio UI 生成配置页面；
+- **App Configuration**：通过 `package/schema_description.json` 描述标准配置项，由 Kavio UI 生成配置页面；配置读写、校验和持久化由 Device SDK 管理；
 - **App Panel**：由 Host Component 创建自定义 Windows 界面，适合文件拖放、预览、交互控制等场景。
 
 ## 2. 推荐仓库结构
@@ -77,10 +81,9 @@ App 开发只需要围绕 USB Channel 设计自己的消息协议，不需要处
 ```text
 <repository>/
 ├── kavio_app/                  # 本目录
-├── kavio_sdk/
-│   ├── device/
-│   └── host/
-└── kavio_platform/
+└── kavio_sdk/
+    ├── device/
+    └── host/
 ```
 
 其中：
@@ -88,7 +91,7 @@ App 开发只需要围绕 USB Channel 设计自己的消息协议，不需要处
 - Native Device Component 使用 `kavio_sdk/device/build/KavioDeviceSdkConfig.cmake` 引用预构建 SDK；
 - Python Device Component 使用 `kavio_sdk/device/py/kavio_sdk`；
 - Host Component 使用 `kavio_sdk/host/include`；
-- `.kap` 打包工具读取 `kavio_platform` 中的 App Manifest 和版本定义。
+- `.kap` 打包工具读取 `kavio_sdk/device` 中统一维护的 App Manifest 和版本定义，不依赖私有 Platform。
 
 ## 3. 单个 App 的目录结构
 
@@ -107,7 +110,7 @@ kavio_app/<app_name>/
 ├── package/                    # 安装包元数据和静态资源
 │   ├── kavio_package.json
 │   ├── icon.png
-│   └── config/                 # 可选 App Configuration
+│   └── schema_description.json # 必需；无配置写 {}
 ├── output/                     # 构建后的待打包产物
 │   ├── device/
 │   └── host/
@@ -204,20 +207,15 @@ python3 kavio_app.py package demo_communication
 - `package/kavio_package.json` 有效；
 - `icon` 指向实际存在的 64×64 PNG；
 - 清单中声明的 Device/Host 产物已经存在于 `output/`；
-- 如果声明了 App Configuration，配置定义和默认配置通过校验；
-- Python 环境安装 `protobuf>=3.20.3`。
+- 同级 `schema_description.json` 必须存在且符合标准 Schema，或为 `{}`（无配置）；
+- Python 环境安装 `protobuf>=3.20.3`。SDK 构建负责生成 Python Protobuf 绑定文件。
 
-打包工具使用 `tools/app_manifest_pb2.py`。如果该文件缺失，或者与当前 `kavio_platform/proto/app_manifest.proto` 不一致，执行：
+打包前先运行 `kavio_sdk/device/build.sh` 生成
+`kavio_sdk/device/py/kavio_sdk/proto_py/app_manifest_pb2.py`。
+无配置的 App 也必须在 `package/schema_description.json` 写入 `{}`，不能省略或写空文件。
 
-```bash
-python3 tools/generate_app_manifest_proto.py
-```
-
-生成脚本需要可用的 `protoc`，也可以显式指定：
-
-```bash
-python3 tools/generate_app_manifest_proto.py --protoc /path/to/protoc
-```
+完整打包规则见 [`docs/modules/app/Kavio_Application_Packaging_Guide.md`](../docs/modules/app/Kavio_Application_Packaging_Guide.md)；
+Schema 格式与数据持久化规则见 [`Kavio_App_Configuration_Spec.md`](../docs/modules/app/Kavio_App_Configuration_Spec.md)。
 
 ## 7. 新建自己的 App
 

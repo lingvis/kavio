@@ -1,0 +1,31 @@
+{
+  "definition_version": "2.0",
+  "title": "系统指标显示",
+  "description": "只控制设备端 TX 上是否显示对应指标，不影响 Device Component 查询和 Host Component 数据采集。",
+  "fields": [
+    {
+      "key": "show_cpu",
+      "name": "显示 CPU 使用率",
+      "category": "显示项目",
+      "description": "是否在设备 TX 左上角显示 Windows CPU 使用率。",
+      "type": "boolean",
+      "value": true
+    },
+    {
+      "key": "show_memory",
+      "name": "显示内存使用情况",
+      "category": "显示项目",
+      "description": "是否在设备 TX 左上角显示 Windows 物理内存使用情况。",
+      "type": "boolean",
+      "value": true
+    },
+    {
+      "key": "show_disks",
+      "name": "显示磁盘使用情况",
+      "category": "显示项目",
+      "description": "是否在设备 TX 左上角显示 Windows 固定磁盘使用情况。",
+      "type": "boolean",
+      "value": true
+    }
+  ]
+}

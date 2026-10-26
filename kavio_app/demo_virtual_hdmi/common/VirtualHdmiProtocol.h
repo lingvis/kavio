@@ -8,12 +8,16 @@ namespace kavio_virtual_hdmi {
 constexpr std::uint32_t kProtocolMagic = 0x4D44484Bu; // "KHDM" in little endian.
 // App-internal protocol version. Host and Device must use the same value.
 constexpr std::uint16_t kProtocolVersion = 1;
+// Device 的 TX 逻辑副屏大小固定 720x720；Host 采集可使用不同分辨率但需按协议适配。
+// 4 字节/像素对应 BGRA8888；stride/payload 容量据此计算，不能分别修改。
 constexpr std::uint32_t kFrameWidth = 720;
 constexpr std::uint32_t kFrameHeight = 720;
 constexpr std::uint32_t kBytesPerPixel = 4;
 constexpr std::uint32_t kPixelFormatBgra8888 = 3; // Kavio SDK BGRA8888.
 constexpr std::uint32_t kFrameStride = kFrameWidth * kBytesPerPixel;
 constexpr std::uint32_t kFrameBytes = kFrameStride * kFrameHeight;
+// 64x64 Tile 是设备端增量更新粒度：更小会增加消息头/枚举开销，更大则放大局部变化成本。
+// Host 与 Device 共享本协议头，必须使用一致 TileSize 与编码格式。
 constexpr std::uint16_t kTileSize = 64;
 constexpr std::uint32_t kMaxTilesPerFrame =
     ((kFrameWidth + kTileSize - 1) / kTileSize) *
@@ -22,6 +26,8 @@ constexpr std::uint32_t kMaxTilePayloadBytes = kTileSize * kTileSize * kBytesPer
 
 // The Host Component accepts payloads up to 1 MiB. A tile message is intentionally
 // kept below 20 KiB, so it is always sent as one complete comm-channel datagram.
+// 64KiB 是本 Demo 对单条 Tile/控制数据报的约束，比 SDK 允许的通道上限更严格；
+// 若修改，需同时核对 Host 分片与 Device 的长度验证。
 constexpr std::size_t kMaxDatagramBytes = 64u * 1024u;
 
 enum class MessageType : std::uint16_t {

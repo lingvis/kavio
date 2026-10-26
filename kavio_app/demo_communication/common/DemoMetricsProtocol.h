@@ -13,11 +13,13 @@
 
 #include <cstdint>
 
+// 设备与 Windows Host 共用的二进制协议；修改定长字段需要同时修改两端编解码。
 namespace demo_metrics {
 
 constexpr uint32_t kMagic = 0x4D434450;  // "PDCM"
 constexpr uint16_t kVersion = 1;
 // 定长响应最多预留 16 个固定磁盘，避免在 Demo 中引入变长序列化。
+// 最多 16 块固定磁盘用于上报展示；超出部分不放大协议结构体。
 constexpr uint32_t kMaxDisks = 16;
 
 enum class MessageType : uint16_t {

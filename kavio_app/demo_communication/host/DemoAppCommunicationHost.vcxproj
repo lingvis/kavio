@@ -32,6 +32,6 @@ echo Staged: "$(KavioOutputDir)\host.dll"</Command></PostBuildEvent>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'"><ClCompile><Optimization>MaxSpeed</Optimization><FunctionLevelLinking>true</FunctionLevelLinking><IntrinsicFunctions>true</IntrinsicFunctions><PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile><Link><EnableCOMDATFolding>true</EnableCOMDATFolding><OptimizeReferences>true</OptimizeReferences></Link></ItemDefinitionGroup>
   <ItemGroup><ClCompile Include="HostComponent.cpp" /></ItemGroup>
   <ItemGroup><ClInclude Include="..\common\DemoMetricsProtocol.h" /></ItemGroup>
-  <ItemGroup><None Include="..\package\config\definition.json" /><None Include="..\package\config\default.json" /></ItemGroup>
+  <ItemGroup><None Include="..\package\schema_description.json" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" /><ImportGroup Label="ExtensionTargets" />
 </Project>

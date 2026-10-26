@@ -28,6 +28,10 @@ namespace {
 using namespace kavio_virtual_hdmi;
 
 HMODULE g_module = nullptr;
+// Windows 控制面板每 1000ms 更新状态，避免 UI 线程为显示统计高频刷新。
+// 捕获初始化失败每 1000ms 重试；60fps 是 Host 采集/传输目标上限，不代表设备 VENC 编码帧率。
+// 约 90 帧一次主动 I 帧可帮助增量依赖恢复；最多两帧在途限制 Host 领先 Device 的程度。
+// 上述阈值均是 demo_virtual_hdmi 自有传输策略，改动需同时核对 ACK 和重同步逻辑。
 constexpr UINT_PTR kPanelTimerId = 1;
 constexpr UINT kPanelTimerMs = 1000;
 constexpr UINT kPanelDriverOperationDone = WM_APP + 1;
@@ -265,6 +269,7 @@ std::vector<std::uint8_t> MakeMessage(MessageType type, const T& payload) {
     return MakeMessage(type, &payload, sizeof(payload));
 }
 
+// 比较 BGRA Tile 与已确认的设备基线；只发送实际变化的区域，减少 USB 通道负载。
 bool TileChanged(const std::vector<std::uint8_t>& frame,
                  const std::vector<std::uint8_t>& baseline,
                  std::uint16_t x, std::uint16_t y,
@@ -297,6 +302,7 @@ std::vector<std::uint8_t> ExtractTile(const std::vector<std::uint8_t>& frame,
     return tile;
 }
 
+// Tile 包括位置、尺寸、载荷类型，发送时每条消息不超过协议数据报上限。
 struct TileDescriptor {
     std::uint16_t x = 0;
     std::uint16_t y = 0;
@@ -304,6 +310,7 @@ struct TileDescriptor {
     std::uint16_t height = 0;
 };
 
+// BuiltFrame 是一轮采集的编码结果；它不是 H.264，而是 Demo 自定义 I/P Tile 帧。
 struct BuiltFrame {
     std::vector<std::vector<std::uint8_t>> datagrams;
     bool key_frame = false;
@@ -414,6 +421,7 @@ BuiltFrame BuildFrameDatagrams(
     return result;
 }
 
+// 重建显示或 Channel 断线时重置增量依赖；不能跨设备 Session 继续沿用旧 P 帧基线。
 void ResetStreamState(HostComponent* component, bool reset_baseline) {
     std::lock_guard<std::mutex> lock(component->stream_mutex);
     ++component->stream_generation;
@@ -427,6 +435,7 @@ void ResetStreamState(HostComponent* component, bool reset_baseline) {
     }
 }
 
+// 采集、Tile 比较、发送和 ACK 窗口按主循环推进；UI 操作不在该线程执行。
 void CaptureLoop(HostComponent* component) {
     VirtualDisplayCapture capture;
     std::uint64_t next_capture_retry = 0;
@@ -647,6 +656,7 @@ void HandleAppReady(HostComponent* component, const std::uint8_t* payload,
     }
 }
 
+// ACK 表示设备帧组装结果，用于推进可依赖的基线，不等于 Windows DXGI 已提交新帧。
 void HandleFrameAck(HostComponent* component, const std::uint8_t* payload,
                     std::size_t payload_size) {
     if (payload_size != sizeof(FrameAckPayload)) return;
@@ -683,6 +693,7 @@ void HandleFrameAck(HostComponent* component, const std::uint8_t* payload,
     Log(component, KavioHostLogLevel_Warning, stream.str());
 }
 
+// 设备请求重新同步时，下轮强制完整 I 帧，避免继续依赖无法恢复的 P 帧。
 void HandleKeyFrameRequest(HostComponent* component,
                            const std::uint8_t* payload,
                            std::size_t payload_size) {
@@ -719,6 +730,7 @@ void NotifyPanelDriverOperationDone(HostComponent* component) {
     if (window) PostMessageW(window, kPanelDriverOperationDone, 0, 0);
 }
 
+// VDD 安装/卸载可能耗时且需要管理员权限，必须在工作线程操作以保持面板可响应。
 void DriverOperationThreadMain(HostComponent* component, std::wstring action) {
     if (_wcsicmp(action.c_str(), L"install") == 0) {
         std::wstring missing_file;
@@ -1119,6 +1131,7 @@ LRESULT CALLBACK PanelWindowProc(HWND window, UINT message,
     return DefWindowProcW(window, message, wparam, lparam);
 }
 
+// Win32 面板仅控制虚拟显示驱动和显示状态，设备视频数据仍由 CaptureLoop 处理。
 void PanelThreadMain(HostComponent* component) {
     WNDCLASSW window_class{};
     window_class.lpfnWndProc = PanelWindowProc;

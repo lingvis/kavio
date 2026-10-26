@@ -17,7 +17,8 @@ import sys
 import zipfile
 
 TOOLS_DIR = Path(__file__).resolve().parent
-APP_MANIFEST_BINDING = TOOLS_DIR / "app_manifest_pb2.py"
+SDK_ROOT = TOOLS_DIR.parents[1] / "kavio_sdk" / "device"
+APP_MANIFEST_BINDING = SDK_ROOT / "py" / "kavio_sdk" / "proto_py" / "app_manifest_pb2.py"
 
 try:
     from google.protobuf.json_format import MessageToJson
@@ -31,7 +32,7 @@ def load_app_manifest_binding():
     if not APP_MANIFEST_BINDING.is_file():
         raise RuntimeError(
             f"Kavio packaging protobuf binding is missing: {APP_MANIFEST_BINDING}; "
-            "regenerate it with tools/generate_app_manifest_proto.py"
+            "build kavio_sdk/device first"
         )
     spec = importlib.util.spec_from_file_location(
         "kavio_app_manifest_pb2", APP_MANIFEST_BINDING
@@ -61,7 +62,7 @@ def load_app_manifest_binding():
     return module
 
 
-app_manifest_pb2 = load_app_manifest_binding()
+app_manifest_pb2 = None # loaded only for packaging, not for status/help
 
 PACKAGE_CONFIG_NAME = "kavio_package.json"
 PACKAGE_CONFIG_VERSION = 1
@@ -69,11 +70,13 @@ GENERATED_FILE_NAMES = {"manifest.json", "signature.json"}
 APP_ICON_WIDTH = 64
 APP_ICON_HEIGHT = 64
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-CONFIG_MAX_FIELDS = 256
+CONFIG_MAX_FIELDS = 128
+# Required in the package source directory and copied unchanged into the .kap.
+SCHEMA_DESCRIPTION_PATH = "schema_description.json"
+CONFIG_MAX_JSON_BYTES = 1024 * 1024
 FIELD_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 ROOT = TOOLS_DIR.parents[1]
-APP_MANIFEST_PROTO = ROOT / "kavio_platform" / "proto" / "app_manifest.proto"
-KAVIO_VERSION_HEADER = ROOT / "kavio_platform" / "common" / "KavioVersion.h"
+KAVIO_VERSION_HEADER = ROOT / "kavio_sdk" / "device" / "include" / "kavio" / "KavioSdkVersion.h"
 
 
 class PackageError(ValueError):
@@ -123,19 +126,6 @@ def append_file_entry(manifest: app_manifest_pb2.AppManifestPb,
     entry.path = package_path
     entry.size = path.stat().st_size
     entry.sha256 = sha256(path)
-
-
-def ensure_manifest_proto_binding_current() -> None:
-    try:
-        source_digest = hashlib.sha256(APP_MANIFEST_PROTO.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise PackageError(f"cannot read App manifest proto: {APP_MANIFEST_PROTO}: {exc}") from exc
-    generated_digest = getattr(app_manifest_pb2, "KAVIO_SOURCE_PROTO_SHA256", "")
-    if generated_digest != source_digest:
-        raise PackageError(
-            "tools/app_manifest_pb2.py is out of sync with app_manifest.proto; run "
-            "kavio_app/tools/generate_app_manifest_proto.py before packaging"
-        )
 
 
 def require_object(value: object, field: str) -> dict[str, object]:
@@ -313,8 +303,9 @@ def validate_field_value(value: object, definition: dict[str, object], field: st
             raise PackageError(f"{field} must be string")
         minimum = definition.get("min_length", 0)
         maximum = definition.get("max_length", 65535)
-        if len(value) < minimum or len(value) > maximum:
-            raise PackageError(f"{field} string length is outside the declared range")
+        byte_length = len(value.encode("utf-8"))
+        if byte_length < minimum or byte_length > maximum:
+            raise PackageError(f"{field} UTF-8 string length is outside the declared range")
         if definition.get("required", False) and not value:
             raise PackageError(f"{field} must not be empty")
         return
@@ -323,7 +314,14 @@ def validate_field_value(value: object, definition: dict[str, object], field: st
             raise PackageError(f"{field} must be an enum string")
         allowed = {item["value"] for item in definition["options"]}
         if value not in allowed:
-            raise PackageError(f"{field} is not one of the declared enum values")
+            custom = definition.get("custom")
+            if custom is None:
+                raise PackageError(f"{field} is not one of the declared enum values")
+            byte_length = len(value.encode("utf-8"))
+            if ((definition.get("required", False) and not value) or
+                    byte_length < custom.get("min_length", 0) or
+                    byte_length > custom.get("max_length", 4096)):
+                raise PackageError(f"{field} custom string length is outside the declared range")
         return
     else:
         raise PackageError(f"{field} has unsupported type")
@@ -336,47 +334,58 @@ def validate_field_value(value: object, definition: dict[str, object], field: st
         raise PackageError(f"{field} is above maximum")
 
 
-def validate_config_files(source_dir: Path, config_section: dict[str, object]) -> tuple[str, str]:
-    allowed_keys = {"definition", "default"}
-    unknown = set(config_section) - allowed_keys
-    if unknown:
-        raise PackageError(f"config contains unsupported fields: {', '.join(sorted(unknown))}")
+def validate_schema_description(source_dir: Path) -> bool:
+    definition_path = SCHEMA_DESCRIPTION_PATH
+    definition_source = source_path(source_dir, definition_path, "schema_description.json")
+    if not definition_source.is_file() or definition_source.is_symlink():
+        raise PackageError("schema_description.json must exist; use {} for no configuration")
+    if definition_source.stat().st_size > 256 * 1024:
+        raise PackageError("schema_description.json exceeds 256 KiB; use {} for no configuration")
+    try:
+        definition_json = read_json_file(
+            source_path(source_dir, definition_path, "schema_description.json"),
+            "schema_description.json")
+        config_definition = require_object(definition_json, "schema_description.json")
+    except PackageError as exc:
+        raise PackageError(f"{exc}; use {{}} in schema_description.json for no configuration") from exc
+    if not config_definition:
+        return False
+    try:
+        validate_schema_description_content(config_definition)
+    except PackageError as exc:
+        raise PackageError(f"{exc}; use {{}} in schema_description.json for no configuration") from exc
+    return True
 
-    definition_path = normalize_relative_path(
-        config_section.get("definition"), "config.definition")
-    default_path = normalize_relative_path(
-        config_section.get("default", ""), "config.default", allow_empty=True)
 
-    definition_json = read_json_file(source_path(source_dir, definition_path, "config.definition"),
-                                 "config.definition")
-    config_definition = require_object(definition_json, "config.definition")
+def validate_schema_description_content(config_definition: dict[str, object]) -> None:
     root_allowed = {"definition_version", "title", "description", "fields"}
     root_unknown = set(config_definition) - root_allowed
     if root_unknown:
         raise PackageError(
-            f"config.definition root contains unsupported fields: {', '.join(sorted(root_unknown))}"
+            f"schema_description.json root contains unsupported fields: {', '.join(sorted(root_unknown))}"
         )
     definition_version = current_config_definition_version()
     if config_definition.get("definition_version") != definition_version:
         raise PackageError(
-            f"config.definition.definition_version must be '{definition_version}'"
+            f"schema_description.json.definition_version must be '{definition_version}'"
         )
     if not isinstance(config_definition.get("title"), str) or not config_definition["title"]:
-        raise PackageError("config.definition.title must be a non-empty string")
+        raise PackageError("schema_description.json.title must be a non-empty string")
     if "description" in config_definition and not isinstance(config_definition["description"], str):
-        raise PackageError("config.definition.description must be a string")
+        raise PackageError("schema_description.json.description must be a string")
     fields = config_definition.get("fields")
     if not isinstance(fields, list) or not fields or len(fields) > CONFIG_MAX_FIELDS:
-        raise PackageError(f"config.definition.fields must contain 1 to {CONFIG_MAX_FIELDS} items")
+        raise PackageError(f"schema_description.json.fields must contain 1 to {CONFIG_MAX_FIELDS} items")
 
     field_allowed = {
-        "key", "name", "category", "description", "type", "default", "required",
+        "key", "name", "category", "description", "type", "required",
         "read_only", "minimum", "maximum", "min_length", "max_length", "multiline",
-        "unit", "placeholder", "options",
+        "unit", "placeholder", "options", "show_value", "custom",
     }
+    field_allowed.add("value")
     definitions: dict[str, dict[str, object]] = {}
     for index, raw_field in enumerate(fields):
-        field_name = f"config.definition.fields[{index}]"
+        field_name = f"schema_description.json.fields[{index}]"
         definition = require_object(raw_field, field_name)
         unknown = set(definition) - field_allowed
         if unknown:
@@ -395,7 +404,7 @@ def validate_config_files(source_dir: Path, config_section: dict[str, object]) -
         if value_type not in {"boolean", "integer", "number", "string", "enum"}:
             raise PackageError(f"{field_name}.type is unsupported: {value_type}")
         definition["type"] = value_type
-        for bool_key in ("required", "read_only", "multiline"):
+        for bool_key in ("required", "read_only", "multiline", "show_value"):
             if bool_key in definition:
                 require_bool(definition[bool_key], f"{field_name}.{bool_key}")
         if definition.get("multiline", False) and value_type != "string":
@@ -426,7 +435,33 @@ def validate_config_files(source_dir: Path, config_section: dict[str, object]) -
         if definition["min_length"] > definition["max_length"]:
             raise PackageError(f"{field_name}.min_length must not exceed max_length")
 
+        if value_type != "enum" and ("show_value" in definition or "custom" in definition):
+            raise PackageError(f"{field_name}.show_value and custom are valid only for enum fields")
+
         if value_type == "enum":
+            if "custom" in definition:
+                custom_name = f"{field_name}.custom"
+                custom = require_object(definition["custom"], custom_name)
+                unknown_custom = set(custom) - {"label", "placeholder", "min_length", "max_length"}
+                if unknown_custom:
+                    raise PackageError(f"{custom_name} contains unsupported fields: " +
+                                       ", ".join(sorted(unknown_custom)))
+                label = custom.get("label", "自定义")
+                placeholder = custom.get("placeholder", "请输入自定义值")
+                require_string(label, f"{custom_name}.label")
+                require_string(placeholder, f"{custom_name}.placeholder", allow_empty=True)
+                if len(label.encode("utf-8")) > 128 or len(placeholder.encode("utf-8")) > 256:
+                    raise PackageError(f"{custom_name} text is too long")
+                for name, fallback in (("min_length", 0), ("max_length", 4096)):
+                    length = custom.get(name, fallback)
+                    if (not isinstance(length, int) or isinstance(length, bool) or
+                            not 0 <= length <= 65535):
+                        raise PackageError(f"{custom_name}.{name} must be an integer in [0, 65535]")
+                    custom[name] = length
+                if custom["min_length"] > custom["max_length"]:
+                    raise PackageError(f"{custom_name}.min_length must not exceed max_length")
+                custom["label"] = label
+                custom["placeholder"] = placeholder
             options = definition.get("options")
             if not isinstance(options, list) or not options or len(options) > 256:
                 raise PackageError(f"{field_name}.options must contain 1 to 256 items")
@@ -439,6 +474,10 @@ def validate_config_files(source_dir: Path, config_section: dict[str, object]) -
                     raise PackageError(f"{option_name} must contain only value and label")
                 value = require_string(option.get("value"), f"{option_name}.value")
                 label = require_string(option.get("label"), f"{option_name}.label")
+                if len(value.encode("utf-8")) > 128 or len(label.encode("utf-8")) > 128:
+                    raise PackageError(f"{option_name} value or label is too long")
+                if "custom" in definition and label == definition["custom"]["label"]:
+                    raise PackageError(f"{option_name}.label conflicts with custom.label")
                 if value in seen:
                     raise PackageError(f"{option_name}.value is duplicated: {value}")
                 seen.add(value)
@@ -447,33 +486,19 @@ def validate_config_files(source_dir: Path, config_section: dict[str, object]) -
         elif "options" in definition:
             raise PackageError(f"{field_name}.options is valid only for enum fields")
 
-        if "default" not in definition:
-            raise PackageError(f"{field_name}.default is required")
-        validate_field_value(definition["default"], definition, f"{field_name}.default")
+        if "value" not in definition:
+            raise PackageError(f"{field_name}.value is required")
+        validate_field_value(definition["value"], definition, f"{field_name}.value")
         definitions[key] = definition
 
-    if default_path:
-        default_json = read_json_file(source_path(source_dir, default_path, "config.default"),
-                                      "config.default")
-        default_config = require_object(default_json, "config.default")
-        unknown = set(default_config) - set(definitions)
-        if unknown:
-            raise PackageError(
-                f"config.default contains unknown fields: {', '.join(sorted(unknown))}"
-            )
-        for key, definition in definitions.items():
-            if key not in default_config:
-                raise PackageError(f"config.default is missing field: {key}")
-            validate_field_value(default_config[key], definition, f"config.default.{key}")
 
-    return definition_path, default_path
 
 
 def parse_manifest(config: dict[str, object], source_dir: Path,
                    package_paths: set[str]) -> app_manifest_pb2.AppManifestPb:
     config_allowed = {
         "packageConfigVersion", "appId", "version", "name", "description",
-        "icon", "device", "host", "config",
+        "icon", "device", "host",
     }
     config_unknown = set(config) - config_allowed
     if config_unknown:
@@ -579,22 +604,15 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
             host_directory, host_binary_relative, "host.binary")
         manifest.host.panel = require_bool(host.get("panel", False), "host.panel")
 
-    config_value = config.get("config")
-    if config_value is not None:
-        config_definition, config_default = validate_config_files(
-            source_dir, require_object(config_value, "config"))
-        manifest.config.definition = config_definition
-        manifest.config.default = config_default
+    # Schema description is mandatory, including applications without configurable values.
+    validate_schema_description(source_dir)
 
     referenced_paths: list[tuple[str, str]] = [(device_manifest.entry, "device.entry")]
     if manifest.icon:
         referenced_paths.append((manifest.icon, "icon"))
     if manifest.HasField("host"):
         referenced_paths.append((manifest.host.binary, "host.binary"))
-    if manifest.HasField("config"):
-        referenced_paths.append((manifest.config.definition, "config.definition"))
-        if manifest.config.default:
-            referenced_paths.append((manifest.config.default, "config.default"))
+    referenced_paths.append((SCHEMA_DESCRIPTION_PATH, "schema_description.json"))
     if device_manifest.runtime == "python":
         for value, field in (
             (device_manifest.python.environment_archive, "device.python.environmentArchive"),
@@ -666,7 +684,8 @@ def main() -> int:
             raise PackageError(f"read {PACKAGE_CONFIG_NAME} failed: {exc}") from exc
         config = require_object(config_data, PACKAGE_CONFIG_NAME)
 
-        ensure_manifest_proto_binding_current()
+        global app_manifest_pb2
+        app_manifest_pb2 = load_app_manifest_binding()
 
         package_files = collect_package_files(source_dir, config_path, output_path)
         package_paths = {package_path for _, package_path in package_files}
@@ -698,7 +717,7 @@ def main() -> int:
         else:
             print("Enable Device development mode before installing this unsigned device-only package.")
         return 0
-    except (PackageError, OSError) as exc:
+    except (PackageError, OSError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

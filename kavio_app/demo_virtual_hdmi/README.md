@@ -150,12 +150,10 @@ demo_virtual_hdmi/
 │   ├── fetch_vdd_package.ps1
 │   ├── stage_vdd_package.cmd
 │   └── vdd_package/
-├── package/
-│   ├── kavio_package.json
-│   └── icon.png
-└── tests/
-    ├── test_vdd_architecture.py
-    └── test_virtual_hdmi.cpp
+└── package/
+    ├── kavio_package.json
+    ├── schema_description.json
+    └── icon.png
 ```
 
 `common/VirtualHdmiProtocol.h` 是 Host 和 Device 共用的图像传输协议定义。
@@ -349,23 +347,7 @@ Open display settings
 
 VDD 安装和移除在独立线程执行，不阻塞图像发送线程和 Panel UI。
 
-## 10. 测试
-
-C++ 协议与组帧测试：
-
-```text
-tests/test_virtual_hdmi.cpp
-```
-
-VDD 工程结构测试：
-
-```bash
-python3 -m unittest demo_virtual_hdmi.tests.test_vdd_architecture -v
-```
-
-测试重点包括 I/P 依赖、CRC、RLE、关键帧请求、VDD 控制命令以及构建资源结构。
-
-## 11. 运行验证
+## 10. 运行验证
 
 1. 构建 Device Component 和 Host Component，并生成 `.kap`；
 2. 安装并启动 App；

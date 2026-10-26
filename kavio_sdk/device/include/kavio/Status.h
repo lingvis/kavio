@@ -1,3 +1,10 @@
+/**
+ * @file Status.h
+ * @brief Kavio Device SDK 错误码与状态对象。
+ *
+ * Status::ok() 判断操作是否成功；code 为稳定的错误码，message 是可选诊断文本。
+ * App 应优先根据 code 处理错误，不依赖 message 的具体措辞。
+ */
 #pragma once
 
 #include <cstdint>
@@ -269,6 +276,7 @@ inline const char* StatusCodeToString(int32_t code)
     return StatusCodeToString(static_cast<StatusCode>(code));
 }
 
+/** @brief SDK 调用结果。OK 表示成功；失败时 code 和 message 说明原因。 */
 struct Status {
     StatusCode code;
     std::string message;

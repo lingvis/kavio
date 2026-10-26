@@ -1,5 +1,5 @@
 {
-  "definition_version": "1.0",
+  "definition_version": "2.0",
   "title": "系统指标显示",
   "description": "只控制设备端 TX 上是否显示对应指标，不影响 Device Component 查询和 Host Component 数据采集。",
   "fields": [
@@ -9,7 +9,7 @@
       "category": "显示项目",
       "description": "是否在设备 TX 左上角显示 Windows CPU 使用率。",
       "type": "boolean",
-      "default": true
+      "value": true
     },
     {
       "key": "show_memory",
@@ -17,7 +17,7 @@
       "category": "显示项目",
       "description": "是否在设备 TX 左上角显示 Windows 物理内存使用情况。",
       "type": "boolean",
-      "default": true
+      "value": true
     },
     {
       "key": "show_disks",
@@ -25,7 +25,7 @@
       "category": "显示项目",
       "description": "是否在设备 TX 左上角显示 Windows 固定磁盘使用情况。",
       "type": "boolean",
-      "default": true
+      "value": true
     }
   ]
 }

@@ -18,13 +18,11 @@ if _proto_dir not in sys.path:
 from . import input_defs_pb2
 from . import input_pb2
 from . import runtime_data_pb2
-from . import user_config_pb2
 from . import ipc_pb2
 
 __all__ = [
     "input_defs_pb2",
     "input_pb2",
     "runtime_data_pb2",
-    "user_config_pb2",
     "ipc_pb2",
 ]

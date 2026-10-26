@@ -10,9 +10,12 @@
 namespace kavio_virtual_hdmi {
 namespace {
 
+// 帧组装统一 BGRA8888，因此每像素固定 4 字节。
+// 单次 RLE token 最多 128 像素，由 7-bit 计数字段决定；长度边界必须匹配 Host 编码端。
 constexpr std::size_t kPixelBytes = 4;
 constexpr std::size_t kMaxRlePacketPixels = 128;
 
+// Tile 坐标与大小组合成唯一键，拒绝同帧重复矩形避免覆盖校验绕过。
 std::uint64_t RectangleKey(std::uint16_t x, std::uint16_t y,
                            std::uint16_t width, std::uint16_t height) {
     return static_cast<std::uint64_t>(x) |
@@ -36,6 +39,7 @@ const std::array<std::uint32_t, 256>& Crc32Table() {
     return table;
 }
 
+// CRC32 必须覆盖重建后的完整画布，保证 P 帧依赖基线和 Host 端计算口径一致。
 std::uint32_t Crc32(const std::uint8_t* data, std::size_t size) {
     const auto& table = Crc32Table();
     std::uint32_t crc = 0xFFFFFFFFu;
@@ -64,6 +68,7 @@ void FrameReceiver::SetFrameError(FrameAssemblyError& error,
     error.message = message;
 }
 
+// 检查尺寸、frame_id 与 base_frame_id；只有完整 I 帧才能重建丢失的 P 帧依赖。
 bool FrameReceiver::Begin(const FrameBeginPayload& message, FrameAssemblyError& error) {
     if (has_begin_) {
         std::ostringstream out;
@@ -227,6 +232,7 @@ bool FrameReceiver::DecodeRleBgra32(const std::uint8_t* encoded_data,
     return true;
 }
 
+// Tile 解码后写入 back_，此阶段不更新对外展示的 front_。
 bool FrameReceiver::ApplyTile(const TilePayloadHeader& message,
                               const std::uint8_t* encoded_data,
                               std::size_t encoded_size,
@@ -306,6 +312,7 @@ bool FrameReceiver::ApplyTile(const TilePayloadHeader& message,
     return true;
 }
 
+// 完整 Tile 数、CRC 与帧尾校验通过后交换前后缓冲，保证消费者只看到完整帧。
 bool FrameReceiver::End(const FrameEndPayload& message,
                         CompletedFrame& completed,
                         FrameAssemblyError& error) {
@@ -362,6 +369,7 @@ void FrameReceiver::EnterResync() {
     need_key_frame_ = true;
 }
 
+// Session 重置必须同时清空 pending 和 P 帧基线，防止跨会话复用旧画面。
 void FrameReceiver::ResetStream() {
     ResetPending();
     last_good_frame_id_ = 0;

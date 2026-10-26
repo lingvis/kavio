@@ -1,0 +1,8 @@
+# Python caches and generated SDK bindings
+__pycache__/
+*.pyc
+
+# Device SDK build products and dependencies (provided by the builder)
+kavio_sdk/device/build/
+kavio_sdk/device/py/kavio_sdk/proto_py/*_pb2.py
+kavio_sdk/device/py/kavio_sdk/sdk_version.py

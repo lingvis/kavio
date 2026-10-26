@@ -1,0 +1,71 @@
+syntax = "proto3";
+package kavio.app.proto;
+
+/*
+ * Kavio App 安装包 manifest.json 的 Protobuf 定义。
+ * files 记录包内文件大小和 SHA-256，用于完整性校验。
+ *
+ * 一个 Kavio App 由唯一 app_id 标识，可包含：
+ * - Device Component：运行于 Kavio 设备；
+ * - Host Component：可选，运行于 Windows，由 Kavio App Host 加载；
+ * - App Configuration：通过包根目录固定的 schema_description.json 声明，{} 表示无配置。
+ */
+message AppManifestFilePb {
+  string path = 1;
+  uint64 size = 2;
+  string sha256 = 3;
+}
+
+message DeviceComponentPythonPb {
+  string python_version = 1;
+  string install_mode = 2;
+  string environment_archive = 3;
+  string environment_definition = 4;
+  string requirements = 5;
+}
+
+message DeviceComponentPb {
+  string runtime = 1;
+  string entry = 2;
+  repeated string arguments = 3;
+  bool auto_start = 4;
+  DeviceComponentPythonPb python = 5;
+}
+
+message HostComponentPb {
+  string binary = 1;
+  bool panel = 2;
+}
+
+message AppManifestPb {
+  uint32 manifest_version = 1;
+  string app_id = 2;
+  string version = 3;
+  string name = 4;
+  string description = 5;
+  string icon = 6;
+  DeviceComponentPb device = 7;
+  HostComponentPb host = 8;
+  repeated AppManifestFilePb files = 9;
+}
+
+message AppSignaturePb {
+  string algorithm = 1;
+  string key_id = 2;
+  string signature = 3;  // Ed25519 签名字节的 Base64 编码。
+}
+
+message AppRegistryPb {
+  string app_id = 1;
+  string version = 2;
+  string bundle_hash = 3;
+  string runtime = 4;
+  bool auto_start = 5;
+  bool has_host_component = 6;
+  string trust_level = 7;
+  string origin = 8;
+  string entry = 9;
+  repeated string arguments = 10;
+  string python_env_path = 11;
+  string package_sha256 = 12;
+}

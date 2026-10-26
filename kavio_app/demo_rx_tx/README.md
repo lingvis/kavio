@@ -80,6 +80,7 @@ demo_rx_tx/
 │   └── main.cpp
 └── package/
     ├── kavio_package.json
+    ├── schema_description.json
     └── icon.png
 ```
 
@@ -87,7 +88,7 @@ demo_rx_tx/
 
 ## 6. Device SDK 生命周期
 
-`KavioClient::Start()` 用于启动 Device SDK。真正开始创建 TX、设置 RX 参数之前，需要等待 Client ready 回调。
+`KavioClient::Start()` 启动 Device SDK 的连接与消息处理。App 在 `OnMessage()` 中收到 `MSG_P2A_RSP_CREATE_SESSION` 后，提交 TX 创建、RX 参数设置等异步请求。
 
 Demo 的主流程为：
 

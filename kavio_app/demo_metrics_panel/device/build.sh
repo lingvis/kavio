@@ -57,35 +57,11 @@ main() {
         exit 1
     }
 
-    # App builds consume the Python SDK artifacts produced by kavio_sdk/device/build.sh.
-    # They must not rebuild the SDK as part of the App build.
-    # Fail the App build if a custom/prebuilt Python SDK does not actually
-    # carry the current session-version field or cannot preserve its presence on
-    # the protobuf wire.
-    PYTHONPATH="$(dirname "${sdk_dir}")${PYTHONPATH:+:${PYTHONPATH}}" python3 - <<'PYSDK'
-from kavio_sdk.proto_py.ipc_pb2 import ReqSessionCreatePb
-from kavio_sdk.sdk_version import (
-    SDK_VERSION_MAJOR,
-    SDK_VERSION_MINOR,
-    SDK_VERSION_PATCH,
-)
-
-if "sdk_version" not in ReqSessionCreatePb.DESCRIPTOR.fields_by_name:
-    raise SystemExit(
-        "Kavio Python SDK is missing ReqSessionCreatePb.sdk_version; "
-        "run kavio_sdk/device/build.sh before building the App"
-    )
-
-req = ReqSessionCreatePb()
-req.sdk_version.major = SDK_VERSION_MAJOR
-req.sdk_version.minor = SDK_VERSION_MINOR
-req.sdk_version.patch = SDK_VERSION_PATCH
-wire = req.SerializeToString()
-parsed = ReqSessionCreatePb()
-parsed.ParseFromString(wire)
-if not parsed.HasField("sdk_version"):
-    raise SystemExit("Kavio Python SDK sdk_version protobuf round-trip validation failed")
-PYSDK
+    # Python App 只使用已构建的 SDK，避免把未生成协议文件的源码暂存进安装包。
+    [[ -f "${sdk_dir}/proto_py/ipc_pb2.py" && -f "${sdk_dir}/sdk_version.py" ]] || {
+        echo "Kavio Python SDK build artifacts are missing; run kavio_sdk/device/build.sh first." >&2
+        exit 1
+    }
 
     python3 -m py_compile \
         "${SCRIPT_DIR}/main.py" \

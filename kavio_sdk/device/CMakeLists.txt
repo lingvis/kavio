@@ -83,21 +83,19 @@ set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_PROTOC ON CACHE BOOL "" FORCE)
 add_subdirectory("${KAVIO_PROTOBUF_DIR}" protobuf_build EXCLUDE_FROM_ALL)
 
-if(TARGET libprotobuf)
-    set(KAVIO_PROTOBUF_LIB_TARGET libprotobuf)
-elseif(TARGET protobuf::libprotobuf)
-    set(KAVIO_PROTOBUF_LIB_TARGET protobuf::libprotobuf)
-else()
-    message(FATAL_ERROR "libprotobuf target not found")
-endif()
+set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_PKGCONFIG_SUPPORT OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_CMAKE_PACKAGE OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(BUILD_OBJECT_LIBS OFF CACHE BOOL "" FORCE)
+set(KAVIO_JSONCPP_DIR "${KAVIO_3RDPARTY_DIR}/jsoncpp-1.9.5")
+add_subdirectory("${KAVIO_JSONCPP_DIR}" jsoncpp_build EXCLUDE_FROM_ALL)
 
-if(TARGET protobuf::protoc)
-    set(KAVIO_PROTOC_TARGET protobuf::protoc)
-elseif(TARGET protoc)
-    set(KAVIO_PROTOC_TARGET protoc)
-else()
-    message(FATAL_ERROR "protoc target not found")
-endif()
+# Bundled protobuf 3.21.12 exposes libprotobuf and protoc.
+set(KAVIO_PROTOBUF_LIB_TARGET libprotobuf)
+set(KAVIO_PROTOC_TARGET protoc)
 
 file(GLOB KAVIO_SDK_PROTO_FILES CONFIGURE_DEPENDS
     "${KAVIO_SDK_PROTO_DIR}/*.proto"
@@ -209,7 +207,6 @@ list(REMOVE_ITEM KAVIO_SDK_SOURCES
 )
 
 add_library(kavio_sdk STATIC ${KAVIO_SDK_SOURCES})
-add_dependencies(kavio_sdk kavio_sdk_proto_py)
 
 target_include_directories(kavio_sdk
     PUBLIC
@@ -223,6 +220,7 @@ target_link_libraries(kavio_sdk
     kavio_sdk_shared
         Threads::Threads
         rt
+        jsoncpp_static
 )
 
 target_compile_options(kavio_sdk
@@ -262,13 +260,17 @@ add_custom_target(kavio_device_sdk_package
         "-DKAVIO_SHARED_LIBRARY=$<TARGET_FILE:kavio_sdk_shared>"
         "-DKAVIO_PROTO_LIBRARY=$<TARGET_FILE:kavio_sdk_proto>"
         "-DKAVIO_PROTOBUF_LIBRARY=$<TARGET_FILE:${KAVIO_PROTOBUF_LIB_TARGET}>"
+        "-DKAVIO_JSONCPP_LIBRARY=$<TARGET_FILE:jsoncpp_static>"
+        "-DKAVIO_JSONCPP_INCLUDE_DIR=${KAVIO_JSONCPP_DIR}/include"
         "-DKAVIO_INCLUDE_DIR=${KAVIO_SDK_INC_DIR}"
         "-DKAVIO_PROTO_INCLUDE_DIR=${KAVIO_SDK_PROTO_GEN_DIR}"
         "-DKAVIO_PROTOBUF_SOURCE_INCLUDE_DIR=${KAVIO_PROTOBUF_DIR}/src"
         -P "${KAVIO_DEVICE_SDK_CONFIG_GENERATOR}"
     DEPENDS
         kavio_sdk
+        kavio_sdk_proto_py
         "${KAVIO_DEVICE_SDK_CONFIG_GENERATOR}"
     COMMENT "Generating KavioDeviceSdkConfig.cmake for Native Apps"
     VERBATIM
 )
+

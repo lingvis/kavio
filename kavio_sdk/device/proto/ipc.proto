@@ -2,7 +2,6 @@ syntax = "proto3";
 
 import "input.proto";
 import "runtime_data.proto";
-import "user_config.proto";
 
 package kavio.ipc.proto;
 
@@ -37,124 +36,83 @@ enum StatusCodePb {
   STATUS_UNSUPPORTED = 11;
 }
 
+// IPC direction is always relative to the managed Device App:
+// A2P = App -> Platform, P2A = Platform -> App.
+// REQ needs a response; RSP echoes IPCHeaderPb.track_id; NTF has no required
+// response; DATA transports application payload without a request/reply pair.
 enum MessageTypePb {
-  // 未知消息；禁止主动发送，仅用于默认值和协议错误兜底。
+  // 未知消息；禁止主动发送。
   MSG_UNKNOWN = 0;
-
-  // 1x: 会话生命周期。
-  // client -> server: 创建 IPC session。
-  // payload=req_session_create(client_name, client_pid, rx_params, tx_params)
-  MSG_REQ_SESSION_CREATE = 1;
-  // server -> client: 返回会话创建结果、实际应用参数和 session 资源配额。
-  // payload=ntf_session_created(session_id, max_sessions, max_rx_shms_per_session,
-  //                             max_tx_shms_per_session, rx_params, tx_params,
-  //                             comm_channel_id, comm_peer_online)
-  MSG_NTF_SESSION_CREATED = 2;
-  // client -> server: 请求关闭指定 session。
-  // payload=req_close_session(session_id)
-  MSG_REQ_CLOSE_SESSION = 3;
-
-  // 10x: RX SHM 控制与通知。
-  // client -> server: 设置当前 session 的完整 RX 参数。
-  // payload=req_set_rx_params(params{enabled, frame_sample_interval})
-  MSG_REQ_SET_RX_PARAMS = 10;
-  // server -> client: 通知新的 RX SHM 已可用。
-  // payload=ntf_rx_shm_ready(rx_shm{id,name,size,width,height,stride,pixel_format}, generation)
-  MSG_NTF_RX_SHM_READY = 11;
-  // server -> client: 通知某个 RX SHM 已失效。
-  // payload=ntf_rx_shm_invalidated(shm_id, generation, reason)
-  MSG_NTF_RX_SHM_INVALIDATED = 12;
-
-  // 20x: TX SHM 控制与通知。
-  // client -> server: 请求创建一个 TX SHM。
-  // payload=req_create_tx_shm(width, height, pixel_format)
-  MSG_REQ_CREATE_TX_SHM = 20;
-  // server -> client: 返回已创建的 TX SHM 信息。
-  // payload=ntf_tx_shm_created(tx_shm{id,name,size,width,height,stride,pixel_format})
-  MSG_NTF_TX_SHM_CREATED = 21;
-  // client -> server: 请求销毁一个 TX SHM。
-  // payload=req_destroy_tx_shm(shm_id)
-  MSG_REQ_DESTROY_TX_SHM = 22;
-  // server -> client: 显式通知某个 TX SHM 已销毁。
-  // payload=ntf_tx_shm_destroyed(shm_id)；当前实现未发送
-  MSG_NTF_TX_SHM_DESTROYED = 23;
-
-  // 30x: TX 参数与输入事件。
-  // client -> server: 设置当前 session 的完整 TX 参数。
-  // payload=req_set_tx_params(params{enabled, z_order})
-  MSG_REQ_SET_TX_PARAMS = 30;
-  // client -> server: 发送输入事件，不等待业务回复。
-  // payload=req_input_event(keyboard|mouse|...)
-  MSG_REQ_INPUT_EVENT = 31;
-
-  // 40x: Runtime 状态查询与推送。
-  // client -> server: 查询完整 runtime 状态快照。
-  // payload=req_query_runtime_data()
-  MSG_REQ_QUERY_RUNTIME_DATA = 40;
-  // client -> server: 仅查询 RX runtime 状态切片。
-  // payload=req_query_runtime_rx_info()
-  MSG_REQ_QUERY_RUNTIME_RX_INFO = 41;
-  // client -> server: 仅查询 TX runtime 状态切片。
-  // payload=req_query_runtime_tx_info()
-  MSG_REQ_QUERY_RUNTIME_TX_INFO = 42;
-  // client -> server: 仅查询输入 runtime 状态切片。
-  // payload=req_query_runtime_input()
-  MSG_REQ_QUERY_RUNTIME_INPUT = 43;
-  // server -> client: 返回或广播 runtime 状态；可为全量，也可只带单个切片。
-  // payload=ntf_runtime_data(rx_info, tx_info, input)
-  MSG_NTF_RUNTIME_DATA = 44;
-  // client -> server: 查询当前用户配置快照。
-  // payload=req_query_user_config()
-  MSG_REQ_QUERY_USER_CONFIG = 45;
-  // server -> client: 返回或广播当前用户配置快照。
-  // payload=ntf_user_config(user_config)
-  MSG_NTF_USER_CONFIG = 46;
-
-  // 50x: 统计信息查询与回复。
-  // client -> server: 查询全局和 session 统计信息。
-  // payload=req_query_stats(all_sessions)
-  MSG_REQ_QUERY_STATS = 50;
-  // server -> client: 返回统计快照。
-  // payload=ntf_stats_reply(global, frame_broker, overlay_manager, tx_renderer, sessions[])
-  MSG_NTF_STATS_REPLY = 51;
-
-  // 60x: H264 encoded stream 控制与通知。
-  // client -> server: 请求创建当前 session 的 H264 encoded stream。
-  MSG_REQ_CREATE_ENCODE_STREAM = 60;
-  // server -> client: 返回 encoded stream shm 信息。
-  MSG_NTF_ENCODE_STREAM_READY = 61;
-  // client -> server: 销毁 encoded stream。
-  MSG_REQ_DESTROY_ENCODE_STREAM = 62;
-  // client -> server: 设置编码码率。当前板端硬件 H264 路径暂不支持运行期动态修改。
-  MSG_REQ_SET_ENCODE_BITRATE = 63;
-  // client -> server: 请求 IDR。当前板端硬件 H264 路径暂不支持运行期动态请求。
-  MSG_REQ_REQUEST_ENCODE_IDR = 64;
-  // server -> client: 通知 encoded stream 失效。
-  MSG_NTF_ENCODE_STREAM_INVALIDATED = 65;
-  // server -> client: 通知 encoded stream 有新 packet，实际码流仍从 SHM 读取。
-  MSG_NTF_ENCODE_FRAME_READY = 66;
-
-
-  // 70x: USB host and peer Host Component state.
-  // server -> client: USB host online/offline state.
-  MSG_NTF_USB_HOST_ONLINE_STATE = 70;
-  // server -> client: this Device Component's peer Host Component online/offline state.
-  MSG_NTF_COMM_PEER_STATE = 71;
-  // 72~73 reserved.
-  // Bidirectional: Platform <-> Device Component, payload is raw App Channel data.
-  MSG_NTF_COMM_CHANNEL_DATA = 74;
-  // server -> managed Device Component: App 配置读取或保存请求，不依赖业务 Channel。
-  MSG_NTF_APP_CONFIG_REQUEST = 75;
-  // managed Device Component -> server: App 配置处理结果。
-  MSG_NTF_APP_CONFIG_RESPONSE = 76;
-
-  // 90x: 通用回复与错误。
-  // server -> client: 通用状态回复，适用于无专用 reply body 的请求。
-  // payload=ntf_status_reply(code, message)
-  MSG_NTF_STATUS_REPLY = 90;
-  // server -> client: 协议层或业务层错误回复。
-  // payload=error(track_id, failed_for, code, message)
-  MSG_ERROR = 91;
+  // A2P 请求创建 IPC Session。
+  MSG_A2P_REQ_CREATE_SESSION = 1;
+  // P2A 回复创建 Session 的结果和资源。
+  MSG_P2A_RSP_CREATE_SESSION = 2;
+  // A2P 请求关闭 Session，通用状态回复。
+  MSG_A2P_REQ_CLOSE_SESSION = 3;
+  // A2P 设置 RX 参数，通用状态回复。
+  MSG_A2P_REQ_SET_RX_PARAMS = 10;
+  // P2A 通知 RX SHM 已就绪。
+  MSG_P2A_NTF_RX_SHM_READY = 11;
+  // P2A 通知 RX SHM 失效。
+  MSG_P2A_NTF_RX_SHM_INVALIDATED = 12;
+  // A2P 请求创建 TX SHM。
+  MSG_A2P_REQ_CREATE_TX_SHM = 20;
+  // P2A 回复创建 TX SHM 的信息。
+  MSG_P2A_RSP_CREATE_TX_SHM = 21;
+  // A2P 请求销毁 TX SHM，通用状态回复。
+  MSG_A2P_REQ_DESTROY_TX_SHM = 22;
+  // P2A TX SHM 销毁通知（目前未发送）。
+  MSG_P2A_NTF_TX_SHM_DESTROYED = 23;
+  // A2P 设置 TX 参数，通用状态回复。
+  MSG_A2P_REQ_SET_TX_PARAMS = 30;
+  // A2P 发送输入事件；不要求应答。
+  MSG_A2P_NTF_INPUT_EVENT = 31;
+  // A2P 查询完整 Runtime 状态。
+  MSG_A2P_REQ_QUERY_RUNTIME_DATA = 40;
+  // A2P 查询 RX Runtime 状态。
+  MSG_A2P_REQ_QUERY_RUNTIME_RX_INFO = 41;
+  // A2P 查询 TX Runtime 状态。
+  MSG_A2P_REQ_QUERY_RUNTIME_TX_INFO = 42;
+  // A2P 查询 Input Runtime 状态。
+  MSG_A2P_REQ_QUERY_RUNTIME_INPUT = 43;
+  // P2A Runtime 查询应答，以 track_id 匹配。
+  MSG_P2A_RSP_RUNTIME_DATA = 44;
+  // P2A Runtime 状态主动广播，track_id=0。
+  MSG_P2A_NTF_RUNTIME_DATA = 45;
+  // A2P 查询统计信息。
+  MSG_A2P_REQ_QUERY_STATS = 50;
+  // P2A 返回统计快照。
+  MSG_P2A_RSP_QUERY_STATS = 51;
+  // A2P 订阅编码流。
+  MSG_A2P_REQ_CREATE_ENCODE_STREAM = 60;
+  // P2A 返回编码流 SHM 信息。
+  MSG_P2A_RSP_CREATE_ENCODE_STREAM = 61;
+  // A2P 取消编码流订阅，通用状态回复。
+  MSG_A2P_REQ_DESTROY_ENCODE_STREAM = 62;
+  // P2A 通知编码流失效。
+  MSG_P2A_NTF_ENCODE_STREAM_INVALIDATED = 65;
+  // P2A 通知编码流有新帧。
+  MSG_P2A_NTF_ENCODE_FRAME_READY = 66;
+  // P2A 通知 USB Host 在线状态。
+  MSG_P2A_NTF_USB_HOST_STATE = 70;
+  // P2A 通知 Host Component 在线状态。
+  MSG_P2A_NTF_COMM_PEER_STATE = 71;
+  // P2A 转发来自 Host Component 的 App Channel 数据。
+  MSG_P2A_DATA_COMM_CHANNEL = 73;
+  // A2P 发送 App Channel 数据给 Host Component。
+  MSG_A2P_DATA_COMM_CHANNEL = 74;
+  // P2A 请求读取 Schema 和当前配置。
+  MSG_P2A_REQ_GET_APP_CONFIG = 75;
+  // A2P 返回 Schema、当前配置或错误。
+  MSG_A2P_RSP_GET_APP_CONFIG = 76;
+  // P2A 请求保存完整配置 JSON。
+  MSG_P2A_REQ_SET_APP_CONFIG = 77;
+  // A2P 返回保存结果和当前配置。
+  MSG_A2P_RSP_SET_APP_CONFIG = 78;
+  // P2A 通用状态回复，适用于无专用 RSP 的请求。
+  MSG_P2A_RSP_STATUS = 90;
+  // P2A 请求错误回复，failed_for 指明失败请求。
+  MSG_P2A_RSP_ERROR = 91;
 }
 
 message IPCHeaderPb {
@@ -190,7 +148,7 @@ message SdkVersionPb {
   uint32 patch = 3;
 }
 
-message ReqSessionCreatePb {
+message A2PReqCreateSessionPb {
   string client_name = 1;
   int32 client_pid = 2;
   RxParamsPb rx_params = 3;
@@ -201,7 +159,7 @@ message ReqSessionCreatePb {
 
 }
 
-message NtfSessionCreatedPb {
+message P2ARspCreateSessionPb {
   uint32 session_id = 1;
   uint32 max_sessions = 2;
   uint32 max_rx_shms_per_session = 3;
@@ -215,34 +173,34 @@ message NtfSessionCreatedPb {
   bool comm_peer_online = 8;
 }
 
-message ReqCreateTxShmPb {
+message A2PReqCreateTxShmPb {
   uint32 width = 1;
   uint32 height = 2;
   PixelFormatPb pixel_format = 3;
 }
 
-message NtfTxShmCreatedPb {
+message P2ARspCreateTxShmPb {
   ShmInfoPb tx_shm = 1;
 }
 
-message ReqDestroyTxShmPb {
+message A2PReqDestroyTxShmPb {
   uint32 shm_id = 1;
 }
 
-message NtfTxShmDestroyedPb {
+message P2ANtfTxShmDestroyedPb {
   uint32 shm_id = 1;
 }
 
-message ReqSetRxParamsPb {
+message A2PReqSetRxParamsPb {
   RxParamsPb params = 1;
 }
 
-message NtfStatusReplyPb {
+message P2ARspStatusPb {
   int32 code = 1;
   string message = 2;
 }
 
-message NtfRxShmReadyPb {
+message P2ANtfRxShmReadyPb {
   ShmInfoPb rx_shm = 1;
   uint64 generation = 2;
 }
@@ -253,47 +211,41 @@ enum RxShmInvalidReasonPb {
   RX_SHM_INVALID_REASON_SESSION_CLOSED = 2;
 }
 
-message NtfRxShmInvalidatedPb {
+message P2ANtfRxShmInvalidatedPb {
   uint32 shm_id = 1;
   uint64 generation = 2;
   RxShmInvalidReasonPb reason = 3;
 }
 
-message ReqSetTxParamsPb {
+message A2PReqSetTxParamsPb {
   TxParamsPb params = 1;
 }
 
-message ErrorPb {
+message P2ARspErrorPb {
   uint64 track_id = 1;
   MessageTypePb failed_for = 2;
   StatusCodePb code = 3;
   string message = 4;
 }
 
-message ReqQueryStatsPb {
+message A2PReqQueryStatsPb {
   bool all_sessions = 1;
 }
 
-message ReqQueryRuntimeDataPb {
+message A2PReqQueryRuntimeDataPb {
 }
 
-message ReqQueryRuntimeRxInfoPb {
+message A2PReqQueryRuntimeRxInfoPb {
 }
 
-message ReqQueryRuntimeTxInfoPb {
+message A2PReqQueryRuntimeTxInfoPb {
 }
 
-message ReqQueryRuntimeInputPb {
+message A2PReqQueryRuntimeInputPb {
 }
 
-message ReqQueryUserConfigPb {
-}
 
-message NtfUserConfigPb {
-  kavio.config.proto.UserConfigPb user_config = 1;
-}
-
-message ReqCloseSessionPb {
+message A2PReqCloseSessionPb {
   uint32 session_id = 1;
 }
 
@@ -350,7 +302,7 @@ message SessionStatsPb {
   int32 client_pid = 12;
 }
 
-message NtfStatsReplyPb {
+message P2ARspQueryStatsPb {
   GlobalRuntimeStatsPb global = 1;
   FrameBrokerStatsPb frame_broker = 2;
   OverlayManagerStatsPb overlay_manager = 3;
@@ -373,15 +325,8 @@ enum EncodedStreamInvalidReasonPb {
   ENCODED_STREAM_INVALID_REASON_PLATFORM_RESET = 5;
 }
 
-message ReqCreateEncodeStreamPb {
-  uint32 width = 1;
-  uint32 height = 2;
-  uint32 fps = 3;
-  uint32 bitrate_kbps = 4;
-  uint32 gop = 5;
-  bool low_latency = 6;
-  bool repeat_sps_pps = 7;
-}
+// Empty request: encoding settings are owned by Platform.
+message A2PReqCreateEncodeStreamPb {}
 
 message EncodedStreamShmInfoPb {
   uint32 stream_id = 1;
@@ -400,29 +345,20 @@ message EncodedStreamShmInfoPb {
 
 }
 
-message NtfEncodeStreamReadyPb {
+message P2ARspCreateEncodeStreamPb {
   EncodedStreamShmInfoPb stream = 1;
 }
 
-message ReqDestroyEncodeStreamPb {
+message A2PReqDestroyEncodeStreamPb {
   uint32 stream_id = 1;
 }
 
-message ReqSetEncodeBitratePb {
-  uint32 stream_id = 1;
-  uint32 bitrate_kbps = 2;
-}
-
-message ReqRequestEncodeIdrPb {
-  uint32 stream_id = 1;
-}
-
-message NtfEncodeStreamInvalidatedPb {
+message P2ANtfEncodeStreamInvalidatedPb {
   uint32 stream_id = 1;
   EncodedStreamInvalidReasonPb reason = 2;
 }
 
-message NtfEncodeFrameReadyPb {
+message P2ANtfEncodeFrameReadyPb {
   uint32 stream_id = 1;
   uint64 packet_seq = 2;
   uint64 pts_us = 3;
@@ -430,91 +366,83 @@ message NtfEncodeFrameReadyPb {
 }
 
 
-message NtfUsbHostOnlineStatePb {
+message P2ANtfUsbHostStatePb {
   bool online = 1;
   string reason = 2;
 }
 
-message NtfCommPeerStatePb {
+message P2ANtfCommPeerStatePb {
   uint32 channel_id = 1;
   bool online = 2;
   string reason = 3;
 }
 
-message NtfCommChannelDataPb {
+message A2PDataCommChannelPb {
+  uint32 channel_id = 1;
+  bytes payload = 2;
+}
+
+message P2ADataCommChannelPb {
   uint32 channel_id = 1;
   bytes payload = 2;
 }
 
 
-enum AppConfigOperationPb {
-  APP_CONFIG_OPERATION_UNKNOWN = 0;
-  APP_CONFIG_OPERATION_GET = 1;
-  APP_CONFIG_OPERATION_SET = 2;
+// Requests are correlated only by IPCHeaderPb.track_id (nonzero).
+message P2AReqGetAppConfigPb {}
+message A2PRspGetAppConfigPb {
+  bytes schema_description_json = 1;
+  bytes config_json = 2;
+  int32 error_code = 3;
+  string error_message = 4;
 }
-
-message NtfAppConfigRequestPb {
-  uint64 request_id = 1;
-  AppConfigOperationPb operation = 2;
+message P2AReqSetAppConfigPb {
+  bytes config_json = 1;
+}
+message A2PRspSetAppConfigPb {
+  int32 error_code = 1;
+  string error_message = 2;
   bytes config_json = 3;
 }
-
-message NtfAppConfigResponsePb {
-  uint64 request_id = 1;
-  AppConfigOperationPb operation = 2;
-  bytes config_json = 3;
-  int32 error_code = 4;
-  string error_message = 5;
-}
-
 
 message IPCPayloadPb {
-  // body 字段号与 MessageTypePb 数值保持一致，便于抓包、日志和代码排查时直接对照。
+  // Payload field number always equals MessageTypePb numeric value.
   oneof body {
-    ReqSessionCreatePb req_session_create = 1;              // MSG_REQ_SESSION_CREATE
-    NtfSessionCreatedPb ntf_session_created = 2;            // MSG_NTF_SESSION_CREATED
-    ReqCloseSessionPb req_close_session = 3;                // MSG_REQ_CLOSE_SESSION
-
-    ReqSetRxParamsPb req_set_rx_params = 10;                 // MSG_REQ_SET_RX_PARAMS
-    NtfRxShmReadyPb ntf_rx_shm_ready = 11;                  // MSG_NTF_RX_SHM_READY
-    NtfRxShmInvalidatedPb ntf_rx_shm_invalidated = 12;      // MSG_NTF_RX_SHM_INVALIDATED
-
-    ReqCreateTxShmPb req_create_tx_shm = 20;                // MSG_REQ_CREATE_TX_SHM
-    NtfTxShmCreatedPb ntf_tx_shm_created = 21;              // MSG_NTF_TX_SHM_CREATED
-    ReqDestroyTxShmPb req_destroy_tx_shm = 22;              // MSG_REQ_DESTROY_TX_SHM
-    NtfTxShmDestroyedPb ntf_tx_shm_destroyed = 23;          // MSG_NTF_TX_SHM_DESTROYED
-
-    ReqSetTxParamsPb req_set_tx_params = 30;                // MSG_REQ_SET_TX_PARAMS
-    kavio.input.proto.InputEventPb req_input_event = 31;    // MSG_REQ_INPUT_EVENT
-
-    ReqQueryRuntimeDataPb req_query_runtime_data = 40;      // MSG_REQ_QUERY_RUNTIME_DATA
-    ReqQueryRuntimeRxInfoPb req_query_runtime_rx_info = 41; // MSG_REQ_QUERY_RUNTIME_RX_INFO
-    ReqQueryRuntimeTxInfoPb req_query_runtime_tx_info = 42; // MSG_REQ_QUERY_RUNTIME_TX_INFO
-    ReqQueryRuntimeInputPb req_query_runtime_input = 43;    // MSG_REQ_QUERY_RUNTIME_INPUT
-    kavio.runtime.proto.RuntimeDataPb ntf_runtime_data = 44; // MSG_NTF_RUNTIME_DATA
-    ReqQueryUserConfigPb req_query_user_config = 45;        // MSG_REQ_QUERY_USER_CONFIG
-    NtfUserConfigPb ntf_user_config = 46;                   // MSG_NTF_USER_CONFIG
-
-    ReqQueryStatsPb req_query_stats = 50;                   // MSG_REQ_QUERY_STATS
-    NtfStatsReplyPb ntf_stats_reply = 51;                   // MSG_NTF_STATS_REPLY
-
-    ReqCreateEncodeStreamPb req_create_encode_stream = 60;  // MSG_REQ_CREATE_ENCODE_STREAM
-    NtfEncodeStreamReadyPb ntf_encode_stream_ready = 61;    // MSG_NTF_ENCODE_STREAM_READY
-    ReqDestroyEncodeStreamPb req_destroy_encode_stream = 62; // MSG_REQ_DESTROY_ENCODE_STREAM
-    ReqSetEncodeBitratePb req_set_encode_bitrate = 63;      // MSG_REQ_SET_ENCODE_BITRATE
-    ReqRequestEncodeIdrPb req_request_encode_idr = 64;      // MSG_REQ_REQUEST_ENCODE_IDR
-    NtfEncodeStreamInvalidatedPb ntf_encode_stream_invalidated = 65; // MSG_NTF_ENCODE_STREAM_INVALIDATED
-    NtfEncodeFrameReadyPb ntf_encode_frame_ready = 66;      // MSG_NTF_ENCODE_FRAME_READY
-
-
-    NtfUsbHostOnlineStatePb ntf_usb_host_online_state = 70; // MSG_NTF_USB_HOST_ONLINE_STATE
-    NtfCommPeerStatePb ntf_comm_peer_state = 71;             // MSG_NTF_COMM_PEER_STATE
-    NtfCommChannelDataPb ntf_comm_channel_data = 74;         // MSG_NTF_COMM_CHANNEL_DATA
-    NtfAppConfigRequestPb ntf_app_config_request = 75;  // MSG_NTF_APP_CONFIG_REQUEST
-    NtfAppConfigResponsePb ntf_app_config_response = 76; // MSG_NTF_APP_CONFIG_RESPONSE
-
-    NtfStatusReplyPb ntf_status_reply = 90;                 // MSG_NTF_STATUS_REPLY
-    ErrorPb error = 91;                                     // MSG_ERROR
+    A2PReqCreateSessionPb a2p_req_create_session = 1;  // MSG_A2P_REQ_CREATE_SESSION
+    P2ARspCreateSessionPb p2a_rsp_create_session = 2;  // MSG_P2A_RSP_CREATE_SESSION
+    A2PReqCloseSessionPb a2p_req_close_session = 3;  // MSG_A2P_REQ_CLOSE_SESSION
+    A2PReqSetRxParamsPb a2p_req_set_rx_params = 10;  // MSG_A2P_REQ_SET_RX_PARAMS
+    P2ANtfRxShmReadyPb p2a_ntf_rx_shm_ready = 11;  // MSG_P2A_NTF_RX_SHM_READY
+    P2ANtfRxShmInvalidatedPb p2a_ntf_rx_shm_invalidated = 12;  // MSG_P2A_NTF_RX_SHM_INVALIDATED
+    A2PReqCreateTxShmPb a2p_req_create_tx_shm = 20;  // MSG_A2P_REQ_CREATE_TX_SHM
+    P2ARspCreateTxShmPb p2a_rsp_create_tx_shm = 21;  // MSG_P2A_RSP_CREATE_TX_SHM
+    A2PReqDestroyTxShmPb a2p_req_destroy_tx_shm = 22;  // MSG_A2P_REQ_DESTROY_TX_SHM
+    P2ANtfTxShmDestroyedPb p2a_ntf_tx_shm_destroyed = 23;  // MSG_P2A_NTF_TX_SHM_DESTROYED
+    A2PReqSetTxParamsPb a2p_req_set_tx_params = 30;  // MSG_A2P_REQ_SET_TX_PARAMS
+    kavio.input.proto.InputEventPb a2p_ntf_input_event = 31;  // MSG_A2P_NTF_INPUT_EVENT
+    A2PReqQueryRuntimeDataPb a2p_req_query_runtime_data = 40;  // MSG_A2P_REQ_QUERY_RUNTIME_DATA
+    A2PReqQueryRuntimeRxInfoPb a2p_req_query_runtime_rx_info = 41;  // MSG_A2P_REQ_QUERY_RUNTIME_RX_INFO
+    A2PReqQueryRuntimeTxInfoPb a2p_req_query_runtime_tx_info = 42;  // MSG_A2P_REQ_QUERY_RUNTIME_TX_INFO
+    A2PReqQueryRuntimeInputPb a2p_req_query_runtime_input = 43;  // MSG_A2P_REQ_QUERY_RUNTIME_INPUT
+    kavio.runtime.proto.RuntimeDataPb p2a_rsp_runtime_data = 44;  // MSG_P2A_RSP_RUNTIME_DATA
+    kavio.runtime.proto.RuntimeDataPb p2a_ntf_runtime_data = 45;  // MSG_P2A_NTF_RUNTIME_DATA
+    A2PReqQueryStatsPb a2p_req_query_stats = 50;  // MSG_A2P_REQ_QUERY_STATS
+    P2ARspQueryStatsPb p2a_rsp_query_stats = 51;  // MSG_P2A_RSP_QUERY_STATS
+    A2PReqCreateEncodeStreamPb a2p_req_create_encode_stream = 60;  // MSG_A2P_REQ_CREATE_ENCODE_STREAM
+    P2ARspCreateEncodeStreamPb p2a_rsp_create_encode_stream = 61;  // MSG_P2A_RSP_CREATE_ENCODE_STREAM
+    A2PReqDestroyEncodeStreamPb a2p_req_destroy_encode_stream = 62;  // MSG_A2P_REQ_DESTROY_ENCODE_STREAM
+    P2ANtfEncodeStreamInvalidatedPb p2a_ntf_encode_stream_invalidated = 65;  // MSG_P2A_NTF_ENCODE_STREAM_INVALIDATED
+    P2ANtfEncodeFrameReadyPb p2a_ntf_encode_frame_ready = 66;  // MSG_P2A_NTF_ENCODE_FRAME_READY
+    P2ANtfUsbHostStatePb p2a_ntf_usb_host_state = 70;  // MSG_P2A_NTF_USB_HOST_STATE
+    P2ANtfCommPeerStatePb p2a_ntf_comm_peer_state = 71;  // MSG_P2A_NTF_COMM_PEER_STATE
+    P2ADataCommChannelPb p2a_data_comm_channel = 73;  // MSG_P2A_DATA_COMM_CHANNEL
+    A2PDataCommChannelPb a2p_data_comm_channel = 74;  // MSG_A2P_DATA_COMM_CHANNEL
+    P2AReqGetAppConfigPb p2a_req_get_app_config = 75;  // MSG_P2A_REQ_GET_APP_CONFIG
+    A2PRspGetAppConfigPb a2p_rsp_get_app_config = 76;  // MSG_A2P_RSP_GET_APP_CONFIG
+    P2AReqSetAppConfigPb p2a_req_set_app_config = 77;  // MSG_P2A_REQ_SET_APP_CONFIG
+    A2PRspSetAppConfigPb a2p_rsp_set_app_config = 78;  // MSG_A2P_RSP_SET_APP_CONFIG
+    P2ARspStatusPb p2a_rsp_status = 90;  // MSG_P2A_RSP_STATUS
+    P2ARspErrorPb p2a_rsp_error = 91;  // MSG_P2A_RSP_ERROR
   }
 }
 

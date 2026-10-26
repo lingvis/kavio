@@ -264,8 +264,9 @@ A Kavio App can combine video input, video output, Windows-side data, and input 
 | Input | keyboard and mouse events |
 | Host / Device communication | App-specific USB Channel |
 | Runtime Data | RX, TX, input, and device state |
-| App Configuration | standard configuration requests and responses |
+| App Configuration | required Schema file; SDK-managed JSON GET/SET and persistence |
 | Runtime Stats | runtime statistics |
+| Shared H.264 encoded stream | subscribe and read packets from shared memory |
 | Device App | C++17 / Python |
 | Windows Host | x64 DLL / C ABI / App Panel |
 
@@ -316,6 +317,9 @@ Used to develop Windows x64 Host Components.
 See [`kavio_sdk/host/README.md`](kavio_sdk/host/README.md).
 
 SDK overview: [`kavio_sdk/README.md`](kavio_sdk/README.md)
+
+Current configuration contract: [`docs/modules/app/Kavio_App_Configuration_Spec.md`](docs/modules/app/Kavio_App_Configuration_Spec.md).
+Build and packaging guide: [`docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md`](docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md).
 
 ## 9. Demo Apps
 

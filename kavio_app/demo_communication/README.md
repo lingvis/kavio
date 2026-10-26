@@ -116,9 +116,7 @@ demo_communication/
 └── package/
     ├── kavio_package.json
     ├── icon.png
-    └── config/
-        ├── definition.json
-        └── default.json
+    └── schema_description.json
 ```
 
 `common/DemoMetricsProtocol.h` 是 Host 和 Device 共用的 USB Channel 协议定义。
@@ -149,8 +147,7 @@ App Configuration 只决定哪些指标绘制到 TX，不会停止指标查询�
 配置定义：
 
 ```text
-package/config/definition.json
-package/config/default.json
+package/schema_description.json
 ```
 
 当前配置项：
@@ -161,25 +158,21 @@ show_memory
 show_disks
 ```
 
-Device Component 通过：
+SDK 通过 `KAVIO_APP_SCHEMA_DESCRIPTION_PATH` 读取固定 Schema，
+通过 `KAVIO_APP_DATA_DIR` 保存有效配置 `config.json`，无需 App 代码自行读写文件。
+首次运行从 Schema 字段 `value` 生成默认 JSON。例如：
 
-```text
-KAVIO_APP_DATA_DIR
+```json
+{"show_cpu":true,"show_memory":true,"show_disks":true}
 ```
 
-获取 App 持久化目录，并保存：
-
-```text
-<KAVIO_APP_DATA_DIR>/config.json
-```
-
-修改配置字段时，需要同步修改：
-
-```text
-package/config/definition.json
-package/config/default.json
-device/main.cpp 中的配置解析和序列化逻辑
-```
+Host 更新时只发送完整 JSON；SDK 在 `HandlePacket()` 中预先校验、保存、更新内存，
+成功后通过既有的 `OnMessage()` 交付 SET，App 在其中调用 `GetAppConfig()`
+读取最新配置。上位机在 `ChannelReady` 获得 App 列表后，对运行中的 App
+主动查询 Schema 与当前配置；设备不主动推送配置快照。
+如果用户文件非法，`Start()` 返回错误，
+Demo 默认退出；仅在用户显式设定 `KAVIO_DEMO_RESTORE_CONFIG=1` 时恢复默认配置。
+`schema_description.json` 必须存在，没有配置的 App 必须明确写 `{}`。
 
 ## 8. TX 输出
 
@@ -212,4 +205,4 @@ z-order:  100
 | 修改 Windows 数据采集 | `host/HostComponent.cpp` |
 | 修改查询周期 | `device/main.cpp` 中的 `kQueryIntervalMs` |
 | 修改 TX 内容 | `device/main.cpp` 中的绘制逻辑 |
-| 修改 App Configuration | `package/config/*` 和 `device/main.cpp` |
+| 修改 App Configuration | `package/schema_description.json` 和 `device/main.cpp` |

@@ -39,6 +39,7 @@ struct DecodedFrame {
     std::vector<uint8_t> pixels;
 };
 
+// Host 负责 PNG/GIF 解码，统一输出可由 Device 直接消费的 BGRA8888 帧。
 struct DecodedImage {
     uint32_t width = 0;
     uint32_t height = 0;
@@ -87,6 +88,7 @@ struct PanelState {
     size_t cached_frame_index = static_cast<size_t>(-1);
 };
 
+// GIF 帧需要记录 disposal、位置和延迟，不能把局部更新帧当成完整画布。
 struct GifFrameInfo {
     uint32_t left = 0;
     uint32_t top = 0;
@@ -187,6 +189,7 @@ uint32_t ReadFrameDelay(IWICMetadataQueryReader* reader) {
     return std::max<uint32_t>(20, delay_10ms * 10u);
 }
 
+// WIC 转换为 BGRA8888，统一 Alpha/stride，避免 Device 端携带多种图片解码器。
 bool DecodeFrameBgra(IWICImagingFactory* factory,
                      IWICBitmapFrameDecode* frame,
                      uint32_t width,
@@ -246,6 +249,7 @@ void ClearCanvasRect(std::vector<uint8_t>& canvas,
     }
 }
 
+// GIF 当前帧只覆盖它的子区域，合成必须在独立画布上处理透明像素。
 void CompositeGifFrame(std::vector<uint8_t>& canvas,
                        uint32_t canvas_width,
                        uint32_t canvas_height,
@@ -275,6 +279,7 @@ void CompositeGifFrame(std::vector<uint8_t>& canvas,
     }
 }
 
+// 从 GIF 帧 metadata 提取延迟和 disposal；单位转换需与 Device 的 delay_ms 匹配。
 bool ReadGifFrameInfo(IWICBitmapFrameDecode* frame,
                       GifFrameInfo& info,
                       std::string& error) {
@@ -310,6 +315,7 @@ bool ReadGifFrameInfo(IWICBitmapFrameDecode* frame,
     return true;
 }
 
+// 按 GIF disposal 规则合成全尺寸帧；每一帧最终都可独立写入 TX Surface。
 bool DecodeGif(IWICImagingFactory* factory,
                IWICBitmapDecoder* decoder,
                UINT frame_count,
@@ -499,6 +505,7 @@ bool DecodeStillImage(IWICImagingFactory* factory,
     return true;
 }
 
+// 调用者只得到统一的完整 BGRA 帧集合，文件扩展名与图像解码细节留在 Host。
 bool DecodeImage(const wchar_t* path, DecodedImage& output, std::string& error) {
     IWICImagingFactory* factory = nullptr;
     IWICBitmapDecoder* decoder = nullptr;
@@ -550,6 +557,7 @@ bool DecodeImage(const wchar_t* path, DecodedImage& output, std::string& error) 
     return ok;
 }
 
+// ImageBegin/FrameBegin/FrameChunk/ImageEnd 是一次完整传输；数据按 kChunkBytes 分包，兼顾 IPC 数据报上限。
 bool UploadImage(PanelState* state) {
     HostComponent* component = state->component;
     if (!component->channel_ready.load() || !component->device_ready.load()) {
@@ -599,6 +607,7 @@ bool UploadImage(PanelState* state) {
     return SendMessage(component, position);
 }
 
+// 只发送拖动坐标，不重复上传像素；Device 通过 dest_pos 修改图层位置。
 void SendPosition(PanelState* state) {
     demo_image_panel::PositionMessage message{};
     demo_image_panel::Initialize(message, demo_image_panel::MessageType::Position);
@@ -635,6 +644,7 @@ void DestroyBackBuffer(PanelState* state) {
     state->back_height = 0;
 }
 
+// 只在窗口尺寸变化时重建双缓冲，避免每次 WM_PAINT 重复分配 GDI 位图。
 bool EnsureBackBuffer(HDC reference_dc, PanelState* state, int width, int height) {
     if (!state || width <= 0 || height <= 0) return false;
     if (state->back_dc && state->back_bitmap &&
@@ -673,6 +683,7 @@ void InvalidateImageBitmap(PanelState* state) {
     if (state) state->cached_frame_index = static_cast<size_t>(-1);
 }
 
+// 将当前 BGRA 帧转换为可绘制位图，并按帧代数复用，避免无变化时反复上传。
 bool EnsureImageBitmap(HDC reference_dc, PanelState* state) {
     if (!state || state->image.frames.empty()) return false;
     const uint32_t width = state->image.width;
@@ -730,6 +741,7 @@ void DrawImage(HDC dc, PanelState* state) {
                static_cast<int>(state->image.width), static_cast<int>(state->image.height), blend);
 }
 
+// 先绘制背景与当前图像，再叠加拖拽边框；需要双缓冲避免拖动闪烁。
 void PaintPanel(HWND window, HDC dc, PanelState* state) {
     RECT client{};
     GetClientRect(window, &client);
@@ -880,6 +892,7 @@ LRESULT CALLBACK PanelWindowProc(HWND window, UINT message, WPARAM wparam, LPARA
     }
 }
 
+// App Panel 使用独立 UI 线程；窗口消息循环与 Host 通道回调分离。
 void PanelThreadMain(HostComponent* component) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     PanelState state;

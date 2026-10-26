@@ -9,11 +9,15 @@
 #include <cstddef>
 #include <cstdint>
 
+// 定义 Host 图片传输与 Device 图像组装的一致消息布局及大小限制。
 namespace demo_image_panel {
 
 constexpr uint32_t kMagic = 0x474D494B;  // "KIMG"
 constexpr uint16_t kVersion = 1;
 // 这些上限同时约束 Host 解码和 Device 内存分配，修改时必须保持双端一致。
+// 图片最大边长 4096、总解码像素数据 128MiB，两项共同限制内存峰值。
+// 每包 256KiB：远低于 SDK Channel 1MiB 数据报上限，按 offset 可靠组装。
+// 最多 4096 帧仍受 128MiB 总数据量限制，并非允许全部大尺寸帧同时存在。
 constexpr uint32_t kMaxWidth = 4096;
 constexpr uint32_t kMaxHeight = 4096;
 // Frame count is only a hard abuse guard. Practical GIF size is constrained by

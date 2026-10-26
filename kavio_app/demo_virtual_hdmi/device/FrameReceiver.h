@@ -11,6 +11,7 @@
 
 namespace kavio_virtual_hdmi {
 
+// 将接收失败区分为 ACK 状态和请求 I 帧原因，供 Device 对 Host 反馈可恢复错误。
 struct FrameAssemblyError {
     FrameAckStatus status = FrameAckStatus::InvalidFrame;
     KeyFrameRequestReason key_frame_reason = KeyFrameRequestReason::InvalidFrame;
@@ -18,6 +19,7 @@ struct FrameAssemblyError {
     std::string message;
 };
 
+// 只有 Begin/Tile/End 和 CRC 都检查通过，才生成 CompletedFrame 供 TX 发布。
 struct CompletedFrame {
     std::uint64_t frame_id = 0;
     std::uint64_t timestamp_ns = 0;

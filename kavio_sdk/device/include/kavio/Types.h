@@ -1,3 +1,7 @@
+/**
+ * @file Types.h
+ * @brief Kavio Device SDK 通用数据类型、图像格式与 Session 配置。
+ */
 #pragma once
 
 #include <cstddef>
@@ -6,6 +10,9 @@
 #include <vector>
 
 #include <kavio/Status.h>
+
+// Maximum serialized size of one IPC package, in bytes.
+#define KAVIO_IPC_MAX_PACKAGE_BYTES (16u * 1024u * 1024u)
 
 namespace kavio {
 
@@ -46,25 +53,6 @@ struct ImageFrame {
     std::vector<uint8_t> data;
 
     bool empty() const { return data.empty(); }
-};
-
-struct RxParams {
-    bool enabled = true;
-    uint32_t frame_sample_interval = 1;
-};
-
-struct TxParams {
-    bool enabled = false;
-    int32_t z_order = 0;
-};
-
-struct SessionOptions {
-    std::string client_name = "kavio_sdk_client";
-    int32_t client_pid = 0;
-    RxParams rx_params;
-    TxParams tx_params;
-    bool auto_query_runtime_on_connect = true;
-    bool auto_query_user_config_on_connect = true;
 };
 
 }  // namespace kavio

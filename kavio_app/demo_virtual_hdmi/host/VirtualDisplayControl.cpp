@@ -50,6 +50,7 @@ const wchar_t kVddConfigPath[] = L"C:\\VirtualDisplayDriver\\vdd_settings.xml";
 const wchar_t kVddConfigBackupPath[] = L"C:\\VirtualDisplayDriver\\vdd_settings.kavio_backup.xml";
 const wchar_t kVddPipeName[] = L"\\\\.\\pipe\\MTTVirtualDisplayPipe";
 
+// RAII 管理 SetupAPI 设备集合句柄，防止安装/卸载路径过早返回时泄漏。
 class DeviceInfoSet {
 public:
     explicit DeviceInfoSet(HDEVINFO handle = INVALID_HANDLE_VALUE) : handle_(handle) {}
@@ -314,6 +315,7 @@ void DeleteIntegrationRegistry() {
     RegDeleteKeyW(HKEY_LOCAL_MACHINE, kRegistryPath);
 }
 
+// 仅管理目标 VDD 根枚举设备，错误码用于区分权限不足、驱动缺失和系统故障。
 bool CreateRootDevice(DWORD& error) {
     DeviceInfoSet devices(SetupDiCreateDeviceInfoList(&GUID_DEVCLASS_DISPLAY, NULL));
     if (!devices.valid()) {
@@ -348,6 +350,7 @@ bool CreateRootDevice(DWORD& error) {
     return true;
 }
 
+// 安装前检查随 App 一起发布的 VDD 文件，缺失时应阻止部分安装。
 bool ValidateVddPackage(std::wstring& missing_path) {
     const std::wstring vdd_dir = ModuleDirectory() + L"\\vdd\\";
     const wchar_t* names[] = {
@@ -531,6 +534,7 @@ bool AddCatalogSignerToTrustedPublisher(const std::wstring& catalog_path,
     return added != FALSE;
 }
 
+// 安装时写入 VDD 运行配置；失败时配合 RestoreVddConfiguration 做回滚。
 bool PrepareVddConfiguration(DWORD& error, std::wstring& detail) {
     if (!CreateDirectoryW(kVddConfigDirectory, NULL)) {
         error = GetLastError();
@@ -591,6 +595,7 @@ bool PrepareVddConfiguration(DWORD& error, std::wstring& detail) {
     return true;
 }
 
+// 卸载/失败回滚尽量恢复先前配置，避免破坏用户已有的虚拟显示设置。
 bool RestoreVddConfiguration(DWORD& error, std::wstring& detail) {
     DWORD had_original = 0;
     const bool tracked = GetRegistryDword(kRegistryHadOriginalConfig, had_original);
@@ -704,6 +709,7 @@ bool ReadVddConfiguredMonitorCount(DWORD& count) {
     return true;
 }
 
+// 控制 Named Pipe 属于 VDD 驱动管理通道，不是 Kavio App 的 USB 数据 Channel。
 bool SendVddPipeCommand(const std::wstring& command, std::wstring& response) {
     response.clear();
     for (int attempt = 0; attempt < 20; ++attempt) {
@@ -789,6 +795,7 @@ bool VddModeIsAvailable(const wchar_t* device_name) {
     return false;
 }
 
+// 解析已启用的 VDD 显示输出并调整模式；不能假设 Windows 主屏就是目标。
 bool ConfigureVddMode(std::wstring& detail) {
     bool saw_vdd = false;
     bool saw_expected_mode = false;
@@ -940,6 +947,7 @@ bool ConfigureVddMode(std::wstring& detail) {
     return false;
 }
 
+// 安装驱动需要平台权限且可能要求重启；将系统错误码向上返回供 UI 展示。
 bool InstallVdd(bool& reboot_required, DWORD& error, std::wstring& detail) {
     std::wstring missing_path;
     if (!ValidateVddPackage(missing_path)) {
@@ -1013,6 +1021,7 @@ bool InstallVdd(bool& reboot_required, DWORD& error, std::wstring& detail) {
     return true;
 }
 
+// 仅移除匹配标识的 VDD 设备实例，避免误删其他显示适配器。
 bool RemoveMatchingDevices(bool& reboot_required, DWORD& error,
                            DWORD& removed_count,
                            std::set<std::wstring>& published_infs) {
@@ -1062,6 +1071,7 @@ bool RemoveMatchingDevices(bool& reboot_required, DWORD& error,
     return true;
 }
 
+// 卸载时清理设备和集成配置；系统级变更不得在 UI 绘制回调中直接执行。
 bool RemoveVddIntegration(bool& reboot_required, DWORD& error,
                           DWORD& removed_count, DWORD& removed_package_count,
                           bool& shared_vdd_kept, std::wstring& detail) {

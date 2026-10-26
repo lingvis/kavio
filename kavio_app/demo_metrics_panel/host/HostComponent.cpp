@@ -28,6 +28,8 @@
 
 namespace {
 
+// 900x650 是宿主 App Panel 外框；560x220 是可拖动指标矩形，与 Python renderer 常量一致。
+// 独立 WM_APP 消息用于从工作线程安全通知 UI，避免跨线程直接绘图。
 constexpr int kPanelWidth = 900;
 constexpr int kPanelHeight = 650;
 constexpr int kBoxWidth = 560;
@@ -108,6 +110,7 @@ bool SendMessage(HostComponent* component, const T& message, bool require_device
 }
 
 // CPU 使用率来自累计 FILETIME 的两次采样差，因此第一次 Query 返回 0 属于正常行为。
+// GetSystemTimes 提供累计 CPU 时间，用前后差分计算百分比以避免启动时数值误差。
 void ReadCpu(HostComponent& component, double& usage) {
     usage = 0.0;
     FILETIME idle = {}, kernel = {}, user = {};
@@ -140,6 +143,7 @@ void ReadMemory(demo_python_metrics::ResponseMessage& response) {
     response.memory_used_bytes = status.ullTotalPhys - status.ullAvailPhys;
 }
 
+// 固定 8 个磁盘槽位，Host 必须按 Python protocol.py 的静态响应长度填充。
 void ReadDisks(demo_python_metrics::ResponseMessage& response) {
     wchar_t drives[512] = {};
     const DWORD length = GetLogicalDriveStringsW(511, drives);
@@ -163,6 +167,7 @@ void ReadDisks(demo_python_metrics::ResponseMessage& response) {
 }
 
 // Position 只有 DeviceReady 后才发送；Channel ready 本身不足以说明 Python 业务循环已就绪。
+// 仅发送矩形在面板内的当前位置，无须重新上传指标像素。
 void SendPosition(HostComponent* component) {
     int x = 0;
     int y = 0;
@@ -380,6 +385,7 @@ LRESULT CALLBACK PanelWindowProc(HWND window, UINT message, WPARAM wparam, LPARA
 }
 
 // App Panel 独立创建窗口和消息循环，避免阻塞 KavioAppHost 的 Host Component 回调线程。
+// UI 线程处理拖动、绘制和状态刷新；Channel 业务消息通过安全路径更新视图状态。
 void PanelThreadMain(HostComponent* component) {
     PanelState state;
     state.component = component;

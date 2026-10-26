@@ -113,13 +113,7 @@ def required_files(package_dir: Path, output_dir: Path,
         result.append(("host binary", component_entry(
             output_dir, host, "binary", "host")))
 
-    config_section = config.get("config")
-    if isinstance(config_section, dict):
-        for key in ("definition", "default"):
-            value = config_section.get(key)
-            if isinstance(value, str) and value:
-                result.append((f"config.{key}", joined(
-                    package_dir, safe_relative_path(value, f"config.{key}"))))
+    result.append(("schema_description.json", package_dir / "schema_description.json"))
 
     icon = config.get("icon")
     if isinstance(icon, str) and icon:
@@ -156,8 +150,12 @@ def show_list() -> int:
             components.append("host")
             if config["host"].get("panel") is True:
                 components.append("panel")
-        if isinstance(config.get("config"), dict):
-            components.append("config")
+        if (ROOT / name / "package" / "schema_description.json").is_file():
+            try:
+                if json.loads((ROOT / name / "package" / "schema_description.json").read_text(encoding="utf-8-sig")) != {}:
+                    components.append("config")
+            except (ValueError, OSError):
+                components.append("invalid-schema")
         print(f"{name:36} {app_id:48} {','.join(components)}")
     return 0
 
@@ -182,19 +180,14 @@ def validate_project_layout(package_dir: Path) -> None:
             )
 
 
-def validate_config_for_status(package_dir: Path, config: dict[str, object]) -> str:
-    config_section = config.get("config")
-    if config_section is None:
-        return ""
-    if not isinstance(config_section, dict):
-        return "config must be a JSON object"
+def validate_config_for_status(package_dir: Path) -> str:
     try:
         spec = importlib.util.spec_from_file_location("kavio_build_package", PACKAGE_TOOL)
         if spec is None or spec.loader is None:
-            return "cannot load package validation tool"
+            return "cannot load packaging validation tool"
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.validate_config_files(package_dir, config_section)
+        module.validate_schema_description(package_dir)
         return ""
     except Exception as exc:
         return str(exc)
@@ -217,12 +210,10 @@ def show_status(project_name: str) -> int:
         print(f"{'OK' if exists else 'MISSING':8} {label:20} {path}")
         failed = failed or not exists
 
-    config_error = validate_config_for_status(package_dir, config)
+    config_error = validate_config_for_status(package_dir)
     if config_error:
         print(f"INVALID  {'config':20} {config_error}")
         failed = True
-    elif isinstance(config.get("config"), dict):
-        print(f"OK       {'config validation':20} valid")
 
     icon_error = validate_icon_for_status(package_dir, config)
     if icon_error:
@@ -250,7 +241,7 @@ def build_package(project_name: str, output: Optional[Path]) -> int:
 
     # App Configuration is package metadata, not a build artifact. Validate it first so a
     # declared-but-missing/invalid Config Definition produces an explicit packaging error.
-    config_error = validate_config_for_status(package_dir, config)
+    config_error = validate_config_for_status(package_dir)
     if config_error:
         raise ProjectError("App Configuration validation failed; packaging stopped:\n  " + config_error)
     icon_error = validate_icon_for_status(package_dir, config)

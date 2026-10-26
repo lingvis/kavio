@@ -11,10 +11,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -23,10 +27,15 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 namespace {
 
+// 以下数值只用于本 Demo 的 TX 信息面板，不是 SDK 或 Platform 的全局限制。
+// 760x420 为三类指标预留展示空间；若调整，DrawText/FillRect 使用的画布尺寸需保持一致。
+// 2 秒查询周期足以演示 Host 指标更新，同时避免每一帧都走 USB Channel 请求。
+// 字体放大 2 倍用于小尺寸 5x7 点阵字，避免引入图形字体依赖。
 constexpr int kOverlayWidth = 760;
 constexpr int kOverlayHeight = 420;
 constexpr int kQueryIntervalMs = 2000;
@@ -38,10 +47,12 @@ std::atomic<bool> g_channel_ready(false);
 std::atomic<uint64_t> g_metrics_generation(0);
 std::mutex g_mutex;
 
+// 只控制哪些指标显示，不影响 Host 查询内容；字段名须对应 package/config 中的定义。
 struct DisplayConfig {
-    bool show_cpu = true;
-    bool show_memory = true;
-    bool show_disks = true;
+    // 当用户配置、备份和包内默认配置均不可用时，使用全关闭的安全状态。
+    bool show_cpu = false;
+    bool show_memory = false;
+    bool show_disks = false;
 };
 
 // 配置由 App Configuration GET/SET 回调读写；指标数据和配置都可能从 SDK 回调线程更新。
@@ -51,61 +62,20 @@ bool g_has_metrics = false;
 
 void OnSignal(int) { g_stop.store(true); }
 
-// Platform 为每个已安装 App 提供独立数据目录；不要把持久配置写到当前工作目录。
-std::string DataDirectory() {
-    const char* value = std::getenv("KAVIO_APP_DATA_DIR");
-    return value && *value ? value : ".";
-}
-
-bool ReadBoolean(const std::string& json, const char* key, bool& value) {
-    const std::string token = std::string("\"") + key + "\"";
-    const size_t key_pos = json.find(token);
-    if (key_pos == std::string::npos) return false;
-    const size_t colon = json.find(':', key_pos + token.size());
-    if (colon == std::string::npos) return false;
-    const size_t first = json.find_first_not_of(" \t\r\n", colon + 1);
-    if (first == std::string::npos) return false;
-    if (json.compare(first, 4, "true") == 0) { value = true; return true; }
-    if (json.compare(first, 5, "false") == 0) { value = false; return true; }
-    return false;
-}
-
-// Demo 只解析自己关心的三个布尔字段；Config Definition 与这里的字段名必须同步修改。
-bool ParseConfig(const std::string& json, DisplayConfig& config) {
+// Convert the SDK-owned Json::Value snapshot to this Demo's rendering switches.
+void ApplyConfig(const Json::Value& json) {
     DisplayConfig next;
-    if (!ReadBoolean(json, "show_cpu", next.show_cpu) ||
-        !ReadBoolean(json, "show_memory", next.show_memory) ||
-        !ReadBoolean(json, "show_disks", next.show_disks)) {
-        return false;
+    next.show_cpu = json.get("show_cpu", false).asBool();
+    next.show_memory = json.get("show_memory", false).asBool();
+    next.show_disks = json.get("show_disks", false).asBool();
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_config = next;
     }
-    config = next;
-    return true;
+    g_metrics_generation.fetch_add(1);
 }
 
-std::string ConfigToJson(const DisplayConfig& config) {
-    std::ostringstream out;
-    out << "{\n"
-        << "  \"show_cpu\": " << (config.show_cpu ? "true" : "false") << ",\n"
-        << "  \"show_memory\": " << (config.show_memory ? "true" : "false") << ",\n"
-        << "  \"show_disks\": " << (config.show_disks ? "true" : "false") << "\n"
-        << "}\n";
-    return out.str();
-}
-
-std::string ReadStoredConfig() {
-    std::ifstream input(DataDirectory() + "/config.json", std::ios::binary);
-    if (!input) return std::string();
-    return std::string(std::istreambuf_iterator<char>(input),
-                       std::istreambuf_iterator<char>());
-}
-
-bool SaveConfig(const std::string& json) {
-    std::ofstream output(DataDirectory() + "/config.json",
-                         std::ios::binary | std::ios::trunc);
-    output.write(json.data(), static_cast<std::streamsize>(json.size()));
-    return output.good();
-}
-
+// 使用内置 5x7 位图字形，演示 App 无字体库时也可直接绘制 BGRA 图层。
 const uint8_t* Glyph(char value) {
     static const uint8_t blank[7] = {};
 #define G(name,a,b,c,d,e,f,g) static const uint8_t name[7]={a,b,c,d,e,f,g}
@@ -159,6 +129,7 @@ void FillRect(std::vector<uint8_t>& image, int x, int y, int width, int height,
             PutPixel(image, x + col, y + row, b, g, r, a);
 }
 
+// 字体直接写入同一 BGRA8888 缓冲，横向字距由 kFontScale 放大。
 void DrawText(std::vector<uint8_t>& image, int x, int y, const std::string& text) {
     for (char raw : text) {
         const char ch = raw >= 'a' && raw <= 'z' ? static_cast<char>(raw - 'a' + 'A') : raw;
@@ -174,6 +145,7 @@ void DrawText(std::vector<uint8_t>& image, int x, int y, const std::string& text
     }
 }
 
+// 仅在展示层做字节单位换算，通信协议仍携带整数原始字节数。
 std::string BytesText(uint64_t value) {
     const double gb = static_cast<double>(value) / (1024.0 * 1024.0 * 1024.0);
     std::ostringstream out;
@@ -241,100 +213,128 @@ kavio::ImageFrame BuildOverlay(uint64_t frame_id) {
     return frame;
 }
 
+// SDK 将 IPCPackagePb 在单条派发线程中顺序回调；此处仅做协议判断和必要的 TX SHM 打开。
+// CreateTxSurface() 的返回值只是本地提交结果，不能据此认为图层可写。
+// 图层收到 MSG_P2A_RSP_CREATE_TX_SHM 后才调用 OpenTxSurface()；Open 失败须请求远端销毁。
+class AppMessageHandler final : public kavio::IClientMessageHandler {
+public:
+    explicit AppMessageHandler(kavio::KavioClient& client, std::shared_ptr<kavio::TxSurface>& surface, std::atomic<bool>& tx_create_pending) : client(client), surface(surface), tx_create_pending(tx_create_pending) {}
+
+    void OnDisconnected() override {
+        g_client_ready.store(false);
+        g_channel_ready.store(false);
+        tx_create_pending.store(false);
+        std::atomic_store(&surface, std::shared_ptr<kavio::TxSurface>{});
+    }
+
+    void OnMessage(const kavio::ipc::proto::IPCPackagePb& msg) override {
+        namespace ip = kavio::ipc::proto;
+        if (msg.header().msg_type() == ip::MSG_P2A_RSP_CREATE_TX_SHM &&
+            msg.payload().has_p2a_rsp_create_tx_shm()) {
+            const auto& info = msg.payload().p2a_rsp_create_tx_shm().tx_shm();
+            kavio::TxSurface opened;
+            auto st = client.OpenTxSurface(info, opened);
+            if (st.ok()) {
+                std::atomic_store(&surface,
+                    std::make_shared<kavio::TxSurface>(std::move(opened)));
+            } else {
+                std::cerr << "OpenTxSurface: " << st.message << std::endl;
+                uint64_t id = 0; client.DestroyTxSurface(info.id(), id);
+            }
+            tx_create_pending.store(false);
+        } else if (msg.header().msg_type() == ip::MSG_P2A_RSP_ERROR && msg.payload().has_p2a_rsp_error() &&
+                   msg.payload().p2a_rsp_error().failed_for() == ip::MSG_A2P_REQ_CREATE_TX_SHM) {
+            std::cerr << "CreateTxSurface: " << msg.payload().p2a_rsp_error().message() << std::endl;
+            tx_create_pending.store(false);
+        }
+        switch (msg.header().msg_type()) {
+        case ip::MSG_P2A_REQ_SET_APP_CONFIG:
+            // The SDK has already committed the value before delivering this event.
+            ApplyConfig(client.GetAppConfig());
+            break;
+        case ip::MSG_P2A_RSP_CREATE_SESSION:
+            g_client_ready.store(true);
+            g_channel_ready.store(client.IsCommChannelReady());
+            break;
+        case ip::MSG_P2A_NTF_USB_HOST_STATE:
+        case ip::MSG_P2A_NTF_COMM_PEER_STATE:
+            g_channel_ready.store(client.IsCommChannelReady());
+            break;
+        case ip::MSG_P2A_DATA_COMM_CHANNEL: {
+            if (!msg.payload().has_p2a_data_comm_channel()) break;
+            const auto& bytes = msg.payload().p2a_data_comm_channel().payload();
+            if (bytes.size() != sizeof(demo_metrics::ResponseMessage)) break;
+            demo_metrics::ResponseMessage message;
+            std::memcpy(&message, bytes.data(), sizeof(message));
+            if (!demo_metrics::IsValid(message.header,
+                    demo_metrics::MessageType::Response, sizeof(message)) ||
+                message.disk_count > demo_metrics::kMaxDisks) break;
+            { std::lock_guard<std::mutex> lock(g_mutex);
+              g_metrics = message; g_has_metrics = true; }
+            g_metrics_generation.fetch_add(1);
+            break;
+        }
+        default: break;
+        }
+    }
+private:
+    kavio::KavioClient& client;
+    std::shared_ptr<kavio::TxSurface>& surface;
+    std::atomic<bool>& tx_create_pending;
+};
 }  // namespace
 
+// 启动连接后从 MSG_P2A_RSP_CREATE_SESSION 获取 Session 可用状态，再异步申请 TX 图层。
 int main() {
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
 
-    const std::string stored = ReadStoredConfig();
-    DisplayConfig loaded;
-    if (!stored.empty() && ParseConfig(stored, loaded)) g_config = loaded;
-
+    std::shared_ptr<kavio::TxSurface> surface;
+    std::atomic<bool> tx_create_pending{false};
+    std::unique_ptr<AppMessageHandler> handler;
     kavio::KavioClient client;
-    kavio::SessionOptions options;
-    options.client_name = "demo_communication";
-    options.rx_params.enabled = false;
-    options.tx_params.enabled = true;
-    options.tx_params.z_order = 100;
+    handler = std::make_unique<AppMessageHandler>(client, surface, tx_create_pending);
+    kavio::ipc::proto::A2PReqCreateSessionPb options;
+    options.set_client_name("demo_communication");
+    // 本示例只绘制 TX 信息面板，不消费 HDMI RX 原始帧，所以关闭 RX SHM 订阅。
+    // interval=1 为协议合法默认值；RX 关闭时不会实际采样。
+    // TX z_order=100 是演示面板的叠放层级，不是所有 App 的推荐固定层级。
+    options.mutable_rx_params()->set_enabled(false);
+    options.mutable_rx_params()->set_frame_sample_interval(1);
+    options.mutable_tx_params()->set_enabled(true);
+    options.mutable_tx_params()->set_z_order(100);
 
-    kavio::KavioClient::Callbacks callbacks;
-    callbacks.on_client_ready = [] { g_client_ready.store(true); };
-    callbacks.on_client_invalid = [] {
-        g_client_ready.store(false);
-        g_channel_ready.store(false);
-    };
-    callbacks.on_comm_channel_ready_changed = [](bool ready) {
-        g_channel_ready.store(ready);
-    };
-    // Channel 是原始数据报通道：每次回调对应 Host 发来的一条完整业务消息。
-    callbacks.on_comm_channel_data = [](const std::vector<uint8_t>& data) {
-        if (data.size() != sizeof(demo_metrics::ResponseMessage)) return;
-        demo_metrics::ResponseMessage message;
-        std::memcpy(&message, data.data(), sizeof(message));
-        if (!demo_metrics::IsValid(message.header,
-                demo_metrics::MessageType::Response, sizeof(message)) ||
-            message.disk_count > demo_metrics::kMaxDisks) return;
-        {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            g_metrics = message;
-            g_has_metrics = true;
-        }
-        g_metrics_generation.fetch_add(1);
-    };
-    // App Configuration 请求来自 Windows 端。SET 只有在本地持久化成功后才更新实际生效配置。
-    callbacks.on_app_config_request = [&client](
-        const kavio::KavioClient::AppConfigRequest& request) {
-        kavio::KavioClient::AppConfigResponse response;
-        response.set_request_id(request.request_id());
-        response.set_operation(request.operation());
-        if (request.operation() == kavio::ipc::proto::APP_CONFIG_OPERATION_GET) {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            response.set_config_json(ConfigToJson(g_config));
-        } else if (request.operation() == kavio::ipc::proto::APP_CONFIG_OPERATION_SET) {
-            DisplayConfig next;
-            if (!ParseConfig(request.config_json(), next)) {
-                response.set_error_code(static_cast<int32_t>(
-                    kavio::StatusCode::Common_InvalidArgument));
-                response.set_error_message("invalid display configuration JSON");
-            } else {
-                const std::string effective = ConfigToJson(next);
-                if (!SaveConfig(effective)) {
-                    response.set_error_code(static_cast<int32_t>(
-                        kavio::StatusCode::Common_InternalError));
-                    response.set_error_message("save configuration failed");
-                } else {
-                    std::lock_guard<std::mutex> lock(g_mutex);
-                    g_config = next;
-                    response.set_config_json(effective);
-                    g_metrics_generation.fetch_add(1);
-                }
-            }
-        } else {
-            response.set_error_code(static_cast<int32_t>(
-                kavio::StatusCode::Common_Unsupported));
-            response.set_error_message("unsupported App Configuration operation");
-        }
-        client.SendAppConfigResponse(response);
-    };
 
-    const kavio::Status start = client.Start(options, std::move(callbacks));
+    kavio::Status start = client.Start(options, *handler);
+    // Demonstration policy: exit on invalid saved configuration, unless the operator
+    // explicitly allows recovery by setting KAVIO_DEMO_RESTORE_CONFIG=1.
+    if (!start.ok() && std::getenv("KAVIO_DEMO_RESTORE_CONFIG") &&
+        std::string(std::getenv("KAVIO_DEMO_RESTORE_CONFIG")) == "1") {
+        const auto reset = client.ResetAppConfigToDefaults();
+        if (reset.ok()) start = client.Start(options, *handler);
+    }
+    if (start.ok()) ApplyConfig(client.GetAppConfig());
     if (!start.ok()) {
         std::cerr << "Start KavioClient failed: " << start.message << std::endl;
         return 1;
     }
 
-    kavio::TxSurface surface;
     uint64_t sequence = 1;
     uint64_t rendered_generation = static_cast<uint64_t>(-1);
     auto next_query = std::chrono::steady_clock::now();
 
     while (!g_stop.load()) {
-        if (g_client_ready.load() && !surface.IsValid()) {
-            const kavio::Status status = client.CreateTxSurface(
-                kOverlayWidth, kOverlayHeight, surface, std::chrono::seconds(2));
-            if (!status.ok()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (g_client_ready.load() && !tx_create_pending.load() &&
+            !std::atomic_load(&surface)) {
+            tx_create_pending.store(true);
+            uint64_t request_id = 0;
+            auto status = client.CreateTxSurface(kOverlayWidth, kOverlayHeight, request_id);
+            if (!status.ok()) {
+                tx_create_pending.store(false);
+                std::cerr << "CreateTxSurface: " << status.message << std::endl;
+            }
         }
+        auto current_surface = std::atomic_load(&surface);
 
         const auto now = std::chrono::steady_clock::now();
         // 查询节拍与渲染节拍解耦：没有 Channel 时不发送，请求周期仍从当前时刻重新计时。
@@ -347,16 +347,20 @@ int main() {
             next_query = now + std::chrono::milliseconds(kQueryIntervalMs);
         }
 
+        // 只在接收到新指标后重绘，减少无意义的 TX SHM 写入。
         const uint64_t generation = g_metrics_generation.load();
         // generation 变化才重绘，避免 30 ms 主循环无意义地重复写同一 TX 帧。
-        if (surface.IsValid() && generation != rendered_generation) {
+        if (current_surface && current_surface->IsValid() && generation != rendered_generation) {
             kavio::ImageFrame frame = BuildOverlay(generation + 1);
-            if (surface.WriteFrame(frame).ok()) rendered_generation = generation;
+            if (current_surface->WriteFrame(frame).ok()) rendered_generation = generation;
         }
+        // 30ms 仅限制 Demo 主循环空闲轮询频率，不代表设备视频帧率。
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
     }
 
-    if (surface.IsValid()) surface.Destroy(std::chrono::seconds(2));
+    if (auto final_surface = std::atomic_exchange(&surface, std::shared_ptr<kavio::TxSurface>{})) {
+        uint64_t id = 0; final_surface->Destroy(id);
+    }
     client.Stop();
     return 0;
 }

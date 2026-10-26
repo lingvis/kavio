@@ -28,6 +28,8 @@ uint64_t FileTimeValue(const FILETIME& value) {
 }
 
 // 一个 KavioAppHost 进程可以承载一个Host Component 实例；所有跨回调共享状态都放在这里。
+// Host Component 只负责 Windows 系统指标采样并回复 Device 查询；不参与 TX 绘制。
+// Windows Host 回调可能跨线程进入，修改共享采样状态时必须遵循已有互斥约束。
 struct DemoHostComponent {
     const KavioHostApi* host = nullptr;
     std::atomic<bool> running{false};
@@ -43,6 +45,7 @@ void Log(DemoHostComponent* component, uint32_t level, const std::string& text) 
 }
 
 // GetSystemTimes 返回累计时间，必须保存上一次采样后做差才能得到区间 CPU 使用率。
+// GetSystemTimes 给出累计 CPU 时间，使用相邻采样差值计算利用率；首次采样只建立基线。
 void ReadCpu(DemoHostComponent& component, double& usage) {
     usage = 0.0;
     FILETIME idle = {}, kernel = {}, user = {};
@@ -65,6 +68,7 @@ void ReadCpu(DemoHostComponent& component, double& usage) {
     component.has_cpu_sample = true;
 }
 
+// 返回总物理内存与已使用量（字节），不要在协议层换算为 KB/MB。
 void ReadMemory(demo_metrics::ResponseMessage& response) {
     MEMORYSTATUSEX status = {};
     status.dwLength = sizeof(status);
@@ -74,6 +78,7 @@ void ReadMemory(demo_metrics::ResponseMessage& response) {
 }
 
 // 仅枚举 DRIVE_FIXED；网络盘、光驱和可移动盘不属于这个 Demo 的统计范围。
+// 枚举固定磁盘并受协议 kMaxDisks 限制，避免响应长度随机器卷数无限增长。
 void ReadDisks(demo_metrics::ResponseMessage& response) {
     wchar_t drives[512] = {};
     const DWORD length = ::GetLogicalDriveStringsW(511, drives);
@@ -111,6 +116,7 @@ KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostCreate(
     return KavioResult_Success;
 }
 
+// Host 生命周期从此入口开始；设备是否已就绪由通信回调和 SDK 状态决定。
 KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostStart(KavioHostHandle handle) {
     DemoHostComponent* component = static_cast<DemoHostComponent*>(handle);
     if (!component) return KavioResult_InvalidArgument;

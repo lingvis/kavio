@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 
+// 此 C++ 结构布局与 Python device/protocol.py 的 struct 格式必须保持一致。
 namespace demo_python_metrics {
 
 constexpr uint32_t kMagic = 0x4D59504Bu;  // "KPYM"

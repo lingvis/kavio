@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -44,17 +45,20 @@ inline void EncodedAtomicThreadFenceAcquire() {
 }
 
 
+inline uint32_t EncodedPacketH264StartCodeSize(const uint8_t* data, size_t size) {
+    if (!data || size < 4 || data[0] != 0 || data[1] != 0) return 0;
+    if (data[2] == 1) return 3;
+    if (size >= 5 && data[2] == 0 && data[3] == 1) return 4;
+    return 0;
+}
+
 inline bool EncodedPacketIsH264StreamData(const uint8_t* data, size_t size) {
-    return data && size >= 5 &&
-           data[0] == 0x00 && data[1] == 0x00 &&
-           data[2] == 0x00 && data[3] == 0x01;
+    return EncodedPacketH264StartCodeSize(data, size) != 0;
 }
 
 inline uint32_t EncodedPacketFirstH264NalType(const uint8_t* data, size_t size) {
-    if (!EncodedPacketIsH264StreamData(data, size)) {
-        return 0;
-    }
-    return data[4] & 0x1F;
+    const uint32_t prefix = EncodedPacketH264StartCodeSize(data, size);
+    return prefix && size > prefix ? (data[prefix] & 0x1F) : 0;
 }
 
 enum EncodedPacketFlags : uint32_t {
@@ -90,6 +94,8 @@ struct EncodedStreamHeader {
     uint64_t write_seq = 0;
     uint32_t write_index = 0;
     uint32_t payload_write_offset = 0;
+    // Payload-wide seqlock generation: odd while writing, even when committed.
+    // Kept in the previously reserved field so the fixed 96-byte ABI is unchanged.
     uint64_t reserved0 = 0;
     uint64_t reserved1 = 0;
 };
@@ -224,6 +230,8 @@ private:
     EncodedStreamHeader* header_ = nullptr;
     EncodedPacketMeta* packets_ = nullptr;
     uint8_t* payload_ = nullptr;
+    // One process owns the writer; serialize possible concurrent AMP output callbacks.
+    mutable std::mutex writer_mutex_;
 };
 
 }  // namespace kavio

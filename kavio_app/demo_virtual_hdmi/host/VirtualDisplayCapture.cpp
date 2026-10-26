@@ -16,6 +16,7 @@ using namespace kavio_virtual_hdmi;
 
 const wchar_t kVddMonitorFriendlyName[] = L"VDD by MTT";
 
+// 采集帧时间戳采用单调时钟，避免系统墙钟校准造成 PTS 倒退。
 std::uint64_t NowNanoseconds() {
     FILETIME value = {};
     GetSystemTimePreciseAsFileTime(&value);
@@ -130,6 +131,7 @@ bool FindVddViaGdi(std::wstring& gdi_name) {
     return false;
 }
 
+// 优先从 DisplayConfig 查询虚拟显示器，再回退 GDI 枚举，避免绑定物理桌面显示器。
 bool FindVddDisplay(std::wstring& gdi_name) {
     gdi_name.clear();
     return FindVddViaDisplayConfig(gdi_name) || FindVddViaGdi(gdi_name);
@@ -149,6 +151,7 @@ bool VirtualDisplayCapture::IsOpen() const {
     return duplication_.Get() != nullptr;
 }
 
+// 在重建或关闭时按资源引用关系释放 staging、duplication、context 与设备。
 void VirtualDisplayCapture::Close() {
     staging_.Reset();
     duplication_.Reset();
@@ -157,6 +160,7 @@ void VirtualDisplayCapture::Close() {
     display_name_.clear();
 }
 
+// 从确定的 VDD 目标屏建立 DXGI Desktop Duplication，避免默认捕获主显示器。
 bool VirtualDisplayCapture::TryOpen(std::wstring& detail) {
     detail.clear();
     if (IsOpen()) return true;

@@ -6,6 +6,8 @@ import dataclasses
 import struct
 from typing import List
 
+# MAGIC/VERSION 由 Host 与 Device 同步解释；响应预留最多 8 块磁盘使结构长度固定。
+# 修改格式时必须同时更新 common/DemoPythonMetricsProtocol.h。
 MAGIC = 0x4D59504B  # "KPYM"
 VERSION = 1
 # 必须与 common/DemoPythonMetricsProtocol.h 完全一致。
@@ -54,6 +56,7 @@ def peek_type(data: bytes) -> int | None:
     return message_type
 
 
+# sequence 帮助调用方对应周期查询与返回；这里不直接请求异步 Platform 控制接口。
 def build_query(sequence: int) -> bytes:
     return _QUERY.pack(*_header(TYPE_QUERY, _QUERY.size), sequence)
 

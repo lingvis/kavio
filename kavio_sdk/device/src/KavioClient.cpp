@@ -6,20 +6,22 @@
  */
 
 #include <kavio/KavioClient.h>
-#include "internal/InternalTypes.h"
 
 #include "internal/FrameShm.h"
+#include "internal/EncodedStreamShm.h"
 #include "internal/IPCSocket.h"
+#include "internal/AppConfigManager.h"
 #include <kavio/KavioSdkVersion.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <deque>
+#include <unordered_set>
 #include <climits>
 #include <condition_variable>
 #include <cstring>
 #include <limits>
-#include <future>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -31,15 +33,12 @@
 namespace kavio {
 namespace {
 
-using ProtoError = kavio::ipc::proto::ErrorPb;
 using ProtoHeader = kavio::ipc::proto::IPCHeaderPb;
 using ProtoMessageType = kavio::ipc::proto::MessageTypePb;
 using ProtoPackage = kavio::ipc::proto::IPCPackagePb;
 using ProtoPixelFormat = kavio::ipc::proto::PixelFormatPb;
-using ProtoStatusCode = kavio::ipc::proto::StatusCodePb;
 
 std::mutex g_sdk_log_mutex;
-thread_local const void* g_sdk_callback_owner = nullptr;
 
 template <typename... Args>
 void SdkLog(const char* level, Args&&... args)
@@ -54,7 +53,7 @@ void SdkLog(const char* level, Args&&... args)
 static const size_t kCommChannelMaxPayloadSize = 1024 * 1024;
 static const size_t kAppConfigMaxPayloadSize = 1024 * 1024;
 
-std::string ResolveClientName(const SessionOptions& options) {
+std::string ResolveClientName(const kavio::ipc::proto::A2PReqCreateSessionPb& options) {
     char program_path[PATH_MAX + 1] = {};
     const ssize_t length = ::readlink("/proc/self/exe", program_path, PATH_MAX);
     if (length > 0) {
@@ -65,11 +64,11 @@ std::string ResolveClientName(const SessionOptions& options) {
             return file_name;
         }
     }
-    return !options.client_name.empty() ? options.client_name : "kavio_sdk_client";
+    return !options.client_name().empty() ? options.client_name() : "kavio_sdk_client";
 }
 
-int32_t ResolveClientPid(const SessionOptions& options) {
-    return options.client_pid != 0 ? options.client_pid : static_cast<int32_t>(::getpid());
+int32_t ResolveClientPid(const kavio::ipc::proto::A2PReqCreateSessionPb& options) {
+    return options.client_pid() != 0 ? options.client_pid() : static_cast<int32_t>(::getpid());
 }
 
 PixelFormat FromProto(ProtoPixelFormat value) {
@@ -109,18 +108,6 @@ bool RuntimeRxConnected(const kavio::runtime::proto::RuntimeDataPb& runtime_data
            rx.status() == RUNTIME_VIDEO_STATUS_RUNNING;
 }
 
-ShmInfo BuildShmInfo(const kavio::ipc::proto::ShmInfoPb& in) {
-    ShmInfo out;
-    out.id = in.id();
-    out.name = in.name();
-    out.size = in.size();
-    out.width = in.width();
-    out.height = in.height();
-    out.stride = in.stride();
-    out.pixel_format = FromProto(in.pixel_format());
-    return out;
-}
-
 ProtoPackage MakePackage(ProtoMessageType type, uint64_t track_id) {
     ProtoPackage package;
     ProtoHeader* header = package.mutable_header();
@@ -129,82 +116,9 @@ ProtoPackage MakePackage(ProtoMessageType type, uint64_t track_id) {
     return package;
 }
 
-StatusCode FromProtoStatusCode(ProtoStatusCode code) {
-    switch (code) {
-    case kavio::ipc::proto::STATUS_OK:
-        return StatusCode::OK;
-    case kavio::ipc::proto::STATUS_INVALID_ARGUMENT:
-        return StatusCode::Common_InvalidArgument;
-    case kavio::ipc::proto::STATUS_TOO_MANY_SESSIONS:
-        return StatusCode::Session_TooManySessions;
-    case kavio::ipc::proto::STATUS_ALREADY_EXISTS:
-        return StatusCode::Common_AlreadyExists;
-    case kavio::ipc::proto::STATUS_NOT_FOUND:
-        return StatusCode::Common_NotFound;
-    case kavio::ipc::proto::STATUS_SHM_CREATE_FAILED:
-        return StatusCode::SHM_CreateFailed;
-    case kavio::ipc::proto::STATUS_SOCKET_ERROR:
-        return StatusCode::IPC_SocketError;
-    case kavio::ipc::proto::STATUS_PROTOCOL_ERROR:
-        return StatusCode::Common_ProtocolError;
-    case kavio::ipc::proto::STATUS_INTERNAL_ERROR:
-        return StatusCode::Common_InternalError;
-    case kavio::ipc::proto::STATUS_INVALID_STATE:
-        return StatusCode::Common_InvalidState;
-    case kavio::ipc::proto::STATUS_UNSUPPORTED:
-        return StatusCode::Common_Unsupported;
-    default:
-        return StatusCode::Common_InternalError;
-    }
-}
-
-Status ConvertStatusReply(const kavio::ipc::proto::NtfStatusReplyPb& reply) {
-    const auto code = static_cast<ProtoStatusCode>(reply.code());
-    if (code == kavio::ipc::proto::STATUS_OK) {
-        return Status::Ok();
-    }
-    return Status::Error(FromProtoStatusCode(code), reply.message());
-}
-
-Status ConvertErrorReply(const ProtoError& error) {
-    const auto code = error.code();
-    if (code == kavio::ipc::proto::STATUS_OK) {
-        return Status::Ok();
-    }
-    return Status::Error(FromProtoStatusCode(code), error.message());
-}
-
 enum class ClientState {
     kInvalid = 0,
     kReady,
-};
-
-enum class PendingKind {
-    kSetRxParams = 0,
-    kSetTxParams,
-    kCreateTxSurface,
-    kDestroyTxSurface,
-    kCloseSession,
-    kQueryStats,
-};
-
-template <typename T>
-struct PendingRequest {
-    uint64_t track_id = 0;
-    PendingKind kind = PendingKind::kSetRxParams;
-    std::chrono::steady_clock::time_point deadline;
-    std::promise<T> promise;
-};
-
-struct TxSurfaceResult {
-    Status status;
-    ShmInfo info;
-    std::shared_ptr<FrameShm> shm;
-};
-
-struct StatsReplyResult {
-    Status status;
-    KavioClient::StatsReply reply;
 };
 
 struct SurfaceOwner {
@@ -213,37 +127,46 @@ struct SurfaceOwner {
                                     const std::shared_ptr<FrameShm>& shm) const = 0;
     virtual Status DestroyTxSurface(uint32_t shm_id,
                                     const std::shared_ptr<FrameShm>& shm,
-                                    std::chrono::milliseconds timeout) = 0;
+                                    uint64_t& request_id) = 0;
 };
-
-template <typename T>
-void TrySetPromiseValue(const std::shared_ptr<PendingRequest<T>>& pending, T value) {
-    if (!pending) {
-        return;
-    }
-    try {
-        pending->promise.set_value(std::move(value));
-    } catch (const std::future_error&) {
-    }
-}
 
 }  // namespace
 
 struct TxSurface::Impl {
-    ShmInfo info;
+    kavio::ipc::proto::ShmInfoPb info;
     std::shared_ptr<FrameShm> shm;
     std::weak_ptr<SurfaceOwner> owner;
 };
 
 struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl>,
                            public SurfaceOwner {
-    SessionOptions session_options;
-    Callbacks callbacks;
+    kavio::ipc::proto::A2PReqCreateSessionPb session_options;
+    bool auto_query_runtime_on_connect = true;
+    IClientMessageHandler* handler = nullptr;
+    AppConfigManager app_config;
 
     mutable std::mutex lifecycle_mutex;
     mutable std::mutex session_mutex;
     mutable std::mutex socket_mutex;
     mutable std::mutex pending_mutex;
+    std::unordered_map<uint64_t, uint32_t> pending_tx_destroy;
+    std::unordered_map<uint64_t, uint32_t> pending_h264_unsubscribe;
+    std::unordered_map<uint64_t, kavio::ipc::proto::RxParamsPb> pending_rx_params;
+    std::unordered_map<uint64_t, kavio::ipc::proto::TxParamsPb> pending_tx_params;
+
+    struct QueuedMessage {
+        ProtoPackage packet;
+        bool disconnected = false;
+        size_t bytes = 0;
+    };
+    std::mutex queue_mutex;
+    std::condition_variable queue_cv;
+    std::deque<QueuedMessage> messages;
+    size_t queue_bytes = 0;
+    bool dispatch_stop = false;
+    std::thread dispatch_thread;
+    static constexpr size_t kMaxQueuedMessages = 4096;
+    static constexpr size_t kMaxQueueBytes = 16 * 1024 * 1024;
     std::condition_variable connection_cv;
 
     std::unique_ptr<IPCSocket> socket;
@@ -258,12 +181,13 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
 
     std::atomic<uint64_t> session_create_track_id{0};
 
-    SessionInfo session_info;
+    // 仅保存 SDK 本地操作需要的最小会话状态；Session 的完整回复通过 protobuf OnMessage 交给 App。
+    uint32_t session_id = 0;
+    uint32_t rx_shm_id = 0;
     RuntimeData runtime_data;
-    UserConfig user_config;
     bool runtime_synced_once = false;
-    RxParams rx_params;
-    TxParams tx_params;
+    kavio::ipc::proto::RxParamsPb rx_params;
+    kavio::ipc::proto::TxParamsPb tx_params;
     bool rx_frame_ready = false;
     uint64_t rx_generation = 0;
     ClientState client_state = ClientState::kInvalid;
@@ -273,21 +197,72 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
     std::unique_ptr<FrameShm> rx_shm;
     std::unordered_map<uint32_t, std::shared_ptr<FrameShm>> tx_shms;
 
-    std::unordered_map<uint64_t, std::shared_ptr<PendingRequest<Status>>> pending_status_requests;
-    std::unordered_map<uint64_t, std::shared_ptr<PendingRequest<TxSurfaceResult>>> pending_tx_create_requests;
-    std::unordered_map<uint64_t, std::shared_ptr<PendingRequest<StatsReplyResult>>> pending_stats_requests;
+    std::shared_ptr<EncodedStreamShm> h264_shm;
+    uint32_t h264_stream_id = 0;
 
     uint64_t AllocTrackId() {
         return next_track_id.fetch_add(1, std::memory_order_relaxed);
     }
 
-    Callbacks SnapshotCallbacks() const {
-        std::lock_guard<std::mutex> lk(lifecycle_mutex);
-        return callbacks;
+    bool Enqueue(const ProtoPackage& packet) {
+        const size_t bytes = packet.ByteSizeLong();
+        bool overflow = false;
+        {
+            std::lock_guard<std::mutex> lk(queue_mutex);
+            if (dispatch_stop) return false;
+            if (messages.size() >= kMaxQueuedMessages ||
+                bytes > kMaxQueueBytes - std::min(queue_bytes, kMaxQueueBytes)) {
+                overflow = true;
+            } else {
+                messages.push_back({packet, false, bytes});
+                queue_bytes += bytes;
+            }
+        }
+        if (!overflow) { queue_cv.notify_one(); return true; }
+        SdkLog("ERROR", "message queue overflow", "bytes=", bytes);
+        // Data-bearing protobuf messages must never be silently dropped.
+        // Disconnect; the App sees OnDisconnected and may retry on reconnect.
+        std::lock_guard<std::mutex> lk(socket_mutex);
+        if (socket) socket->Disconnect();
+        return false;
+    }
+
+    void EnqueueDisconnected() {
+        {
+            std::lock_guard<std::mutex> lk(queue_mutex);
+            if (dispatch_stop) return;
+            messages.clear();
+            queue_bytes = 0;
+            messages.push_back({ProtoPackage{}, true, 0});
+        }
+        queue_cv.notify_one();
+    }
+
+    void DispatchLoop() {
+        while (true) {
+            QueuedMessage item;
+            {
+                std::unique_lock<std::mutex> lk(queue_mutex);
+                queue_cv.wait(lk, [&] { return dispatch_stop || !messages.empty(); });
+                if (dispatch_stop && messages.empty()) break;
+                item = std::move(messages.front());
+                messages.pop_front();
+                queue_bytes -= item.bytes;
+            }
+            if (!handler) continue;
+            try {
+                if (item.disconnected) handler->OnDisconnected();
+                else handler->OnMessage(item.packet);
+            } catch (const std::exception& e) {
+                SdkLog("ERROR", "App OnMessage exception:", e.what());
+            } catch (...) {
+                SdkLog("ERROR", "App OnMessage unknown exception");
+            }
+        }
     }
 
     bool IsSessionReadyLocked() const {
-        return connected.load(std::memory_order_acquire) && session_info.session_id != 0;
+        return connected.load(std::memory_order_acquire) && session_id != 0;
     }
 
     bool IsSessionReady() const {
@@ -296,9 +271,9 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
     }
 
     void ResetSessionDataLocked() {
-        session_info = {};
+        session_id = 0;
+        rx_shm_id = 0;
         runtime_data.Clear();
-        user_config.Clear();
         runtime_synced_once = false;
         rx_frame_ready = false;
         rx_generation = 0;
@@ -307,6 +282,8 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
         comm_peer_online = false;
         rx_shm.reset();
         tx_shms.clear();
+        h264_shm.reset();
+        h264_stream_id = 0;
     }
 
     RuntimeData SnapshotRuntimeData() const {
@@ -314,10 +291,6 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
         return runtime_data;
     }
 
-    UserConfig SnapshotUserConfig() const {
-        std::lock_guard<std::mutex> lk(session_mutex);
-        return user_config;
-    }
 
     bool SnapshotClientReady() const {
         std::lock_guard<std::mutex> lk(session_mutex);
@@ -347,7 +320,7 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
             out.pixel_format = FromRuntimeProto(rx.pixel_format());
         }
 
-        if (rx_frame_ready && rx_shm && rx_shm->IsValid() && session_info.rx_shm.id != 0) {
+        if (rx_frame_ready && rx_shm && rx_shm->IsValid() && rx_shm_id != 0) {
             out.frame_available = true;
         }
 
@@ -359,100 +332,10 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
         return BuildRxInfoLocked();
     }
 
-    void ReportClientReady() {
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_client_ready) {
-            cb.on_client_ready();
-        }
-    }
-
-    void ReportClientInvalid() {
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_client_invalid) {
-            cb.on_client_invalid();
-        }
-    }
-
-    void ReportRuntimeDataChanged(const RuntimeData& runtime_snapshot) {
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_runtime_changed) {
-            cb.on_runtime_changed(runtime_snapshot);
-        }
-    }
-
-    void ReportUserConfigChanged(const UserConfig& user_config_snapshot) {
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_user_config_changed) {
-            cb.on_user_config_changed(user_config_snapshot);
-        }
-    }
-
-    void ReportRxChanged(const RxInfo& prev, const RxInfo& next) {
-        if (prev == next) {
-            return;
-        }
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_rx_changed) {
-            cb.on_rx_changed(prev, next);
-        }
-    }
-
-    void ReportUSBHostOnlineChanged(bool online, const std::string& reason) {
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_usb_host_online_changed) {
-            cb.on_usb_host_online_changed(online, reason);
-        }
-    }
-
-    void ReportCommChannelReadyChanged(bool ready) {
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_comm_channel_ready_changed) {
-            cb.on_comm_channel_ready_changed(ready);
-        }
-    }
-
-    void ReportCommChannelData(const std::string& payload) {
-        Callbacks cb = SnapshotCallbacks();
-        if (cb.on_comm_channel_data) {
-            cb.on_comm_channel_data(std::vector<uint8_t>(payload.begin(), payload.end()));
-        }
-    }
-
-    bool ReportAppConfigRequest(
-        const kavio::ipc::proto::NtfAppConfigRequestPb& request) {
-        Callbacks cb = SnapshotCallbacks();
-        if (!cb.on_app_config_request) {
-            return false;
-        }
-        cb.on_app_config_request(request);
-        return true;
-    }
-
-    void ReportClientStateChanged(ClientState state) {
-        if (state == ClientState::kReady) {
-            ReportClientReady();
-        } else {
-            ReportClientInvalid();
-        }
-    }
-
     bool SetClientStateLocked(ClientState next_state) {
-        if (client_state == next_state) {
-            return false;
-        }
+        if (client_state == next_state) return false;
         client_state = next_state;
         return true;
-    }
-
-    void TransitionClientState(ClientState next_state) {
-        bool changed = false;
-        {
-            std::lock_guard<std::mutex> lk(session_mutex);
-            changed = SetClientStateLocked(next_state);
-        }
-        if (changed) {
-            ReportClientStateChanged(next_state);
-        }
     }
 
     Status SendPacket(const ProtoPackage& packet) {
@@ -461,90 +344,6 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
             return Status::Error(StatusCode::Common_NotConnected, "socket is not connected");
         }
         return socket->Send(packet);
-    }
-
-    Status EnsureBlockingAllowed() const {
-        if (g_sdk_callback_owner == this) {
-            return Status::Error(StatusCode::Common_InvalidState,
-                                 "blocking SDK API cannot be called from SDK callback thread");
-        }
-        return Status::Ok();
-    }
-
-    void CancelPendingStatus(uint64_t track_id, const Status& status) {
-        std::shared_ptr<PendingRequest<Status>> pending;
-        {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            const auto it = pending_status_requests.find(track_id);
-            if (it == pending_status_requests.end()) {
-                return;
-            }
-            pending = it->second;
-            pending_status_requests.erase(it);
-        }
-        TrySetPromiseValue(pending, status);
-    }
-
-    void CancelPendingTxCreate(uint64_t track_id, const Status& status) {
-        std::shared_ptr<PendingRequest<TxSurfaceResult>> pending;
-        {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            const auto it = pending_tx_create_requests.find(track_id);
-            if (it == pending_tx_create_requests.end()) {
-                return;
-            }
-            pending = it->second;
-            pending_tx_create_requests.erase(it);
-        }
-
-        TxSurfaceResult result;
-        result.status = status;
-        TrySetPromiseValue(pending, std::move(result));
-    }
-
-    void CancelPendingStats(uint64_t track_id, const Status& status) {
-        std::shared_ptr<PendingRequest<StatsReplyResult>> pending;
-        {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            const auto it = pending_stats_requests.find(track_id);
-            if (it == pending_stats_requests.end()) {
-                return;
-            }
-            pending = it->second;
-            pending_stats_requests.erase(it);
-        }
-
-        StatsReplyResult result;
-        result.status = status;
-        TrySetPromiseValue(pending, std::move(result));
-    }
-
-    void FailAllPendingRequests(const Status& status) {
-        std::unordered_map<uint64_t, std::shared_ptr<PendingRequest<Status>>> status_requests;
-        std::unordered_map<uint64_t, std::shared_ptr<PendingRequest<TxSurfaceResult>>> tx_requests;
-        std::unordered_map<uint64_t, std::shared_ptr<PendingRequest<StatsReplyResult>>> stats_requests;
-        {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            status_requests.swap(pending_status_requests);
-            tx_requests.swap(pending_tx_create_requests);
-            stats_requests.swap(pending_stats_requests);
-        }
-
-        for (auto& entry : status_requests) {
-            TrySetPromiseValue(entry.second, status);
-        }
-
-        for (auto& entry : tx_requests) {
-            TxSurfaceResult result;
-            result.status = status;
-            TrySetPromiseValue(entry.second, std::move(result));
-        }
-
-        for (auto& entry : stats_requests) {
-            StatsReplyResult result;
-            result.status = status;
-            TrySetPromiseValue(entry.second, std::move(result));
-        }
     }
 
     bool IsTxSurfaceCurrent(uint32_t shm_id,
@@ -559,66 +358,79 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
 
     Status DestroyTxSurface(uint32_t shm_id,
                             const std::shared_ptr<FrameShm>& shm,
-                            std::chrono::milliseconds timeout) override {
-        Status st = EnsureBlockingAllowed();
-        if (!st.ok()) {
-            return st;
-        }
-
+                            uint64_t& request_id) override {
         {
             std::lock_guard<std::mutex> lk(session_mutex);
-            if (!IsSessionReadyLocked() || client_state != ClientState::kReady) {
+            if (!IsSessionReadyLocked())
                 return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-            }
-            const auto it = tx_shms.find(shm_id);
-            if (it == tx_shms.end() || it->second != shm) {
-                return Status::Error(StatusCode::Common_InvalidArgument, "surface does not belong to this client");
-            }
+            auto it = tx_shms.find(shm_id);
+            if (it == tx_shms.end() || it->second != shm)
+                return Status::Error(StatusCode::Common_InvalidArgument, "surface not owned by client");
         }
-
-        const uint64_t track_id = AllocTrackId();
-        auto pending = std::make_shared<PendingRequest<Status>>();
-        pending->track_id = track_id;
-        pending->kind = PendingKind::kDestroyTxSurface;
-        pending->deadline = std::chrono::steady_clock::now() + timeout;
-        auto future = pending->promise.get_future();
+        const auto id = AllocTrackId();
+        auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_DESTROY_TX_SHM, id);
+        req.mutable_payload()->mutable_a2p_req_destroy_tx_shm()->set_shm_id(shm_id);
         {
             std::lock_guard<std::mutex> lk(pending_mutex);
-            pending_status_requests[track_id] = pending;
+            pending_tx_destroy[id] = shm_id;
         }
-
-        auto req = MakePackage(kavio::ipc::proto::MSG_REQ_DESTROY_TX_SHM, track_id);
-        req.mutable_payload()->mutable_req_destroy_tx_shm()->set_shm_id(shm_id);
-        st = SendPacket(req);
+        auto st = SendPacket(req);
         if (!st.ok()) {
-            CancelPendingStatus(track_id, st);
+            std::lock_guard<std::mutex> lk(pending_mutex);
+            pending_tx_destroy.erase(id);
             return st;
         }
-
-        if (future.wait_for(timeout) != std::future_status::ready) {
-            const Status timeout_status = Status::Error(StatusCode::Common_Timeout,
-                                                        "destroy tx surface timeout");
-            CancelPendingStatus(track_id, timeout_status);
-            return timeout_status;
-        }
-
-        Status result = future.get();
-        if (!result.ok()) {
-            return result;
-        }
-
-        {
-            std::lock_guard<std::mutex> lk(session_mutex);
-            tx_shms.erase(shm_id);
-            session_info.tx_shms.erase(
-                std::remove_if(session_info.tx_shms.begin(),
-                               session_info.tx_shms.end(),
-                               [shm_id](const ShmInfo& info) {
-                                   return info.id == shm_id;
-                               }),
-                session_info.tx_shms.end());
-        }
+        request_id = id;
         return Status::Ok();
+    }
+
+    void ProcessAsyncStatus(const ProtoPackage& packet) {
+        const uint64_t id = packet.header().msg_type() == kavio::ipc::proto::MSG_P2A_RSP_ERROR &&
+                            packet.payload().has_p2a_rsp_error() && packet.payload().p2a_rsp_error().track_id()
+                            ? packet.payload().p2a_rsp_error().track_id() : packet.header().track_id();
+        const bool ok = packet.header().msg_type() == kavio::ipc::proto::MSG_P2A_RSP_STATUS &&
+                        packet.payload().has_p2a_rsp_status() &&
+                        packet.payload().p2a_rsp_status().code() == kavio::ipc::proto::STATUS_OK;
+        std::lock_guard<std::mutex> lk(pending_mutex);
+        auto tx = pending_tx_destroy.find(id);
+        if (tx != pending_tx_destroy.end()) {
+            if (ok) {
+                std::lock_guard<std::mutex> slk(session_mutex);
+                tx_shms.erase(tx->second);
+            }
+            pending_tx_destroy.erase(tx);
+        }
+        auto hs = pending_h264_unsubscribe.find(id);
+        if (hs != pending_h264_unsubscribe.end()) {
+            if (ok) {
+                std::lock_guard<std::mutex> slk(session_mutex);
+                if (h264_stream_id == hs->second) {
+                    h264_shm.reset(); h264_stream_id = 0;
+                }
+            }
+            pending_h264_unsubscribe.erase(hs);
+        }
+        auto rx = pending_rx_params.find(id);
+        if (rx != pending_rx_params.end()) {
+            if (ok) {
+                std::lock_guard<std::mutex> slk(session_mutex);
+                rx_params = rx->second;
+                *session_options.mutable_rx_params() = rx_params;
+                if (!rx_params.enabled()) {
+                    rx_shm.reset(); rx_shm_id = 0; rx_frame_ready = false;
+                }
+            }
+            pending_rx_params.erase(rx);
+        }
+        auto txp = pending_tx_params.find(id);
+        if (txp != pending_tx_params.end()) {
+            if (ok) {
+                std::lock_guard<std::mutex> slk(session_mutex);
+                tx_params = txp->second;
+                *session_options.mutable_tx_params() = tx_params;
+            }
+            pending_tx_params.erase(txp);
+        }
     }
 
     void MergeRuntimeDataLocked(const RuntimeData& in) {
@@ -635,174 +447,92 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
     }
 
     void HandleTransportDisconnected(const Status& status) {
-        RuntimeData runtime_snapshot;
-        RxInfo prev_rx;
-        RxInfo next_rx;
-        bool state_changed = false;
-        bool old_host_online = false;
-        bool old_channel_ready = false;
         {
             std::lock_guard<std::mutex> lk(session_mutex);
-            prev_rx = BuildRxInfoLocked();
-            old_host_online = usb_host_online;
-            old_channel_ready = usb_host_online && comm_channel_id != 0 && comm_peer_online;
             transport_connected.store(false, std::memory_order_release);
             connected.store(false, std::memory_order_release);
             ResetSessionDataLocked();
-            next_rx = BuildRxInfoLocked();
-            state_changed = SetClientStateLocked(ClientState::kInvalid);
-            runtime_snapshot = runtime_data;
+            SetClientStateLocked(ClientState::kInvalid);
         }
 
-        FailAllPendingRequests(Status::Error(StatusCode::Common_NotConnected,
-                                             "transport disconnected"));
-        ReportRuntimeDataChanged(runtime_snapshot);
-        ReportRxChanged(prev_rx, next_rx);
-        if (old_host_online) {
-            ReportUSBHostOnlineChanged(false, "IPC transport disconnected");
-        }
-        if (old_channel_ready) {
-            ReportCommChannelReadyChanged(false);
-        }
-        if (state_changed) {
-            ReportClientInvalid();
-        }
+        { std::lock_guard<std::mutex> lk(pending_mutex);
+          pending_tx_destroy.clear(); pending_h264_unsubscribe.clear();
+          pending_rx_params.clear(); pending_tx_params.clear(); }
+        EnqueueDisconnected();
         connection_cv.notify_all();
         (void)status;
     }
 
     void HandleSessionCreated(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_session_created()) {
+        if (!packet.payload().has_p2a_rsp_create_session()) {
             return;
         }
 
-        const auto& body = packet.payload().ntf_session_created();
+        const auto& body = packet.payload().p2a_rsp_create_session();
         if (!body.has_rx_params() || !body.has_tx_params()) {
             return;
         }
 
-        bool state_changed = false;
         {
             std::lock_guard<std::mutex> lk(session_mutex);
-            session_info.session_id = body.session_id();
-            session_info.max_sessions = body.max_sessions();
-            session_info.max_rx_shms_per_session = body.max_rx_shms_per_session();
-            session_info.max_tx_shms_per_session = body.max_tx_shms_per_session();
-            rx_params.enabled = body.rx_params().enabled();
-            rx_params.frame_sample_interval = body.rx_params().frame_sample_interval();
-            tx_params.enabled = body.tx_params().enabled();
-            tx_params.z_order = body.tx_params().z_order();
-            session_options.rx_params = rx_params;
-            session_options.tx_params = tx_params;
+            session_id = body.session_id();
+            rx_params = body.rx_params();
+            tx_params = body.tx_params();
+            *session_options.mutable_rx_params() = rx_params;
+            *session_options.mutable_tx_params() = tx_params;
             comm_channel_id = body.comm_channel_id();
             comm_peer_online = body.comm_peer_online();
             connected.store(true, std::memory_order_release);
-            state_changed = SetClientStateLocked(ClientState::kReady);
+            SetClientStateLocked(ClientState::kReady);
         }
 
-        if (state_changed) {
-            ReportClientReady();
-        }
-        if (SnapshotCommChannelReady()) {
-            ReportCommChannelReadyChanged(true);
-        }
+
         connection_cv.notify_all();
 
-        if (session_options.auto_query_runtime_on_connect) {
+        if (auto_query_runtime_on_connect) {
             const uint64_t track_id = AllocTrackId();
-            auto req = MakePackage(kavio::ipc::proto::MSG_REQ_QUERY_RUNTIME_DATA, track_id);
-            req.mutable_payload()->mutable_req_query_runtime_data();
+            auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_QUERY_RUNTIME_DATA, track_id);
+            req.mutable_payload()->mutable_a2p_req_query_runtime_data();
             (void)SendPacket(req);
         }
 
-        if (session_options.auto_query_user_config_on_connect) {
-            const uint64_t track_id = AllocTrackId();
-            auto req = MakePackage(kavio::ipc::proto::MSG_REQ_QUERY_USER_CONFIG, track_id);
-            req.mutable_payload()->mutable_req_query_user_config();
-            (void)SendPacket(req);
-        }
     }
 
     void HandleError(const ProtoPackage& packet) {
-        if (!packet.payload().has_error()) {
-            return;
-        }
-
-        const ProtoError& error = packet.payload().error();
-        const uint64_t track_id = error.track_id() != 0 ? error.track_id() : packet.header().track_id();
-        const Status status = ConvertErrorReply(error);
-
-        bool is_session_create_failure = false;
-        if (track_id == session_create_track_id.load(std::memory_order_acquire)) {
-            std::lock_guard<std::mutex> lk(session_mutex);
-            is_session_create_failure = session_info.session_id == 0;
-        }
-        if (is_session_create_failure) {
-            stop_requested.store(true, std::memory_order_release);
+        if (!packet.payload().has_p2a_rsp_error()) return;
+        const auto id = packet.payload().p2a_rsp_error().track_id() ?
+            packet.payload().p2a_rsp_error().track_id() : packet.header().track_id();
+        if (id == session_create_track_id.load(std::memory_order_acquire)) {
+            bool session_not_established = false;
             {
                 std::lock_guard<std::mutex> lk(session_mutex);
-                connected.store(false, std::memory_order_release);
-                SetClientStateLocked(ClientState::kInvalid);
+                session_not_established = session_id == 0;
+                if (session_not_established) {
+                    connected.store(false, std::memory_order_release);
+                    SetClientStateLocked(ClientState::kInvalid);
+                }
             }
-            FailAllPendingRequests(status);
-            ReportClientInvalid();
-            std::lock_guard<std::mutex> socket_lk(socket_mutex);
-            if (socket) {
-                socket->Disconnect();
+            if (session_not_established) {
+                // Preserve the existing initial-session failure behavior:
+                // stop retrying after the server explicitly refuses Session creation.
+                EnqueueDisconnected();
+                stop_requested.store(true, std::memory_order_release);
+                { std::lock_guard<std::mutex> lk(socket_mutex);
+                  if (socket) socket->Disconnect(); }
+                connection_cv.notify_all();
+                return;
             }
-            connection_cv.notify_all();
-            return;
         }
-
-        CancelPendingStatus(track_id, status);
-        CancelPendingTxCreate(track_id, status);
-        CancelPendingStats(track_id, status);
+        ProcessAsyncStatus(packet);
     }
 
     void HandleStatusReply(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_status_reply()) {
-            return;
-        }
-
-        const uint64_t track_id = packet.header().track_id();
-        if (track_id == 0) {
-            return;
-        }
-
-        const Status status = ConvertStatusReply(packet.payload().ntf_status_reply());
-
-        std::shared_ptr<PendingRequest<Status>> status_pending;
-        {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            auto it = pending_status_requests.find(track_id);
-            if (it != pending_status_requests.end()) {
-                status_pending = it->second;
-                pending_status_requests.erase(it);
-            }
-        }
-        if (status_pending) {
-            TrySetPromiseValue(status_pending, status);
-            return;
-        }
-
-        std::shared_ptr<PendingRequest<TxSurfaceResult>> tx_pending;
-        {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            const auto it = pending_tx_create_requests.find(track_id);
-            if (it != pending_tx_create_requests.end()) {
-                tx_pending = it->second;
-                pending_tx_create_requests.erase(it);
-            }
-        }
-        if (tx_pending) {
-            TxSurfaceResult result;
-            result.status = status;
-            TrySetPromiseValue(tx_pending, std::move(result));
-        }
+        if (packet.payload().has_p2a_rsp_status()) ProcessAsyncStatus(packet);
     }
 
     void HandleRuntimeDataPacket(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_runtime_data()) {
+        if (!packet.payload().has_p2a_rsp_runtime_data() &&
+            !packet.payload().has_p2a_ntf_runtime_data()) {
             return;
         }
 
@@ -812,36 +542,24 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
         {
             std::lock_guard<std::mutex> lk(session_mutex);
             prev_rx = BuildRxInfoLocked();
-            MergeRuntimeDataLocked(packet.payload().ntf_runtime_data());
+            if (packet.header().msg_type() == kavio::ipc::proto::MSG_P2A_NTF_RUNTIME_DATA)
+                MergeRuntimeDataLocked(packet.payload().p2a_ntf_runtime_data());
+            else
+                MergeRuntimeDataLocked(packet.payload().p2a_rsp_runtime_data());
             runtime_snapshot = runtime_data;
             next_rx = BuildRxInfoLocked();
         }
 
-        ReportRuntimeDataChanged(runtime_snapshot);
-        ReportRxChanged(prev_rx, next_rx);
+
     }
 
-    void HandleUserConfigPacket(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_user_config()) {
-            return;
-        }
-
-        UserConfig user_config_snapshot;
-        {
-            std::lock_guard<std::mutex> lk(session_mutex);
-            user_config = packet.payload().ntf_user_config().user_config();
-            user_config_snapshot = user_config;
-        }
-
-        ReportUserConfigChanged(user_config_snapshot);
-    }
 
     void HandleRxShmReady(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_rx_shm_ready()) {
+        if (!packet.payload().has_p2a_ntf_rx_shm_ready()) {
             return;
         }
 
-        const auto& body = packet.payload().ntf_rx_shm_ready();
+        const auto& body = packet.payload().p2a_ntf_rx_shm_ready();
         std::string error;
         FrameShm::OpenConfig open_config;
         open_config.name = body.rx_shm().name();
@@ -853,10 +571,10 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
             std::lock_guard<std::mutex> lk(session_mutex);
             prev_rx = BuildRxInfoLocked();
             rx_shm.reset();
-            session_info.rx_shm = BuildShmInfo(body.rx_shm());
+            rx_shm_id = body.rx_shm().id();
 
             if (!opened || !opened->IsValid()) {
-                session_info.rx_shm = {};
+                rx_shm_id = 0;
                 rx_frame_ready = false;
             } else {
                 rx_shm = std::move(opened);
@@ -867,11 +585,10 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
         }
 
         (void)error;
-        ReportRxChanged(prev_rx, next_rx);
     }
 
     void HandleRxShmInvalidated(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_rx_shm_invalidated()) {
+        if (!packet.payload().has_p2a_ntf_rx_shm_invalidated()) {
             return;
         }
 
@@ -880,258 +597,182 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
         {
             std::lock_guard<std::mutex> lk(session_mutex);
             prev_rx = BuildRxInfoLocked();
-            const auto& body = packet.payload().ntf_rx_shm_invalidated();
-            if (session_info.rx_shm.id == body.shm_id()) {
+            const auto& body = packet.payload().p2a_ntf_rx_shm_invalidated();
+            if (rx_shm_id == body.shm_id()) {
                 rx_shm.reset();
-                session_info.rx_shm = {};
+                rx_shm_id = 0;
                 rx_frame_ready = false;
             }
             next_rx = BuildRxInfoLocked();
         }
 
-        ReportRxChanged(prev_rx, next_rx);
+
     }
 
-    void HandleTxCreated(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_tx_shm_created()) {
-            return;
-        }
-
-        const uint64_t track_id = packet.header().track_id();
-        if (track_id == 0) {
-            return;
-        }
-
-        std::shared_ptr<PendingRequest<TxSurfaceResult>> pending;
-        {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            const auto it = pending_tx_create_requests.find(track_id);
-            if (it == pending_tx_create_requests.end()) {
-                return;
-            }
-            pending = it->second;
-            pending_tx_create_requests.erase(it);
-        }
-
-        const ShmInfo info = BuildShmInfo(packet.payload().ntf_tx_shm_created().tx_shm());
-        std::string error;
-        FrameShm::OpenConfig open_config;
-        open_config.name = info.name;
-        std::unique_ptr<FrameShm> opened = FrameShm::Open(open_config, &error);
-
-        TxSurfaceResult result;
-        if (!opened || !opened->IsValid()) {
-            result.status = Status::Error(StatusCode::SHM_OperationFailed,
-                                          error.empty() ? "failed to open tx shm" : error);
-            TrySetPromiseValue(pending, std::move(result));
-            return;
-        }
-
-        result.status = Status::Ok();
-        result.info = info;
-        result.shm = std::shared_ptr<FrameShm>(opened.release());
+    // TX/H.264 create replies are forwarded untouched. Apps explicitly invoke
+    // OpenTxSurface/OpenH264Stream within OnMessage if they want to use SHM.
+    void HandleH264Invalidated(const ProtoPackage& packet) {
+        if (!packet.payload().has_p2a_ntf_encode_stream_invalidated()) return;
+        const auto& msg = packet.payload().p2a_ntf_encode_stream_invalidated();
         {
             std::lock_guard<std::mutex> lk(session_mutex);
-            tx_shms[info.id] = result.shm;
-            session_info.tx_shms.push_back(info);
+            if (h264_stream_id == msg.stream_id()) {
+                h264_shm.reset();
+                h264_stream_id = 0;
+            }
         }
-        TrySetPromiseValue(pending, std::move(result));
+
     }
 
-    void HandleStatsReply(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_stats_reply()) {
-            return;
-        }
-
-        const uint64_t track_id = packet.header().track_id();
-        if (track_id == 0) {
-            return;
-        }
-
-        std::shared_ptr<PendingRequest<StatsReplyResult>> pending;
+    void HandleH264FrameReady(const ProtoPackage& packet) {
+        if (!packet.payload().has_p2a_ntf_encode_frame_ready()) return;
+        const auto& msg = packet.payload().p2a_ntf_encode_frame_ready();
+        // A queued notification may arrive after this Session unsubscribes.
+        // Ignore it instead of reporting a stale frame to the application.
         {
-            std::lock_guard<std::mutex> lk(pending_mutex);
-            const auto it = pending_stats_requests.find(track_id);
-            if (it == pending_stats_requests.end()) {
-                return;
-            }
-            pending = it->second;
-            pending_stats_requests.erase(it);
+            std::lock_guard<std::mutex> lk(session_mutex);
+            if (h264_shm && h264_stream_id != msg.stream_id()) return;
         }
 
-        StatsReplyResult result;
-        result.status = Status::Ok();
-        result.reply = packet.payload().ntf_stats_reply();
-        TrySetPromiseValue(pending, std::move(result));
     }
 
     void HandleUSBHostOnlineState(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_usb_host_online_state()) {
+        if (!packet.payload().has_p2a_ntf_usb_host_state()) {
             return;
         }
-        const auto& body = packet.payload().ntf_usb_host_online_state();
-        bool host_changed = false;
-        bool ready_changed = false;
-        bool next_ready = false;
+        const auto& body = packet.payload().p2a_ntf_usb_host_state();
         {
             std::lock_guard<std::mutex> lk(session_mutex);
-            const bool old_ready = usb_host_online && comm_channel_id != 0 && comm_peer_online;
-            host_changed = usb_host_online != body.online();
             usb_host_online = body.online();
-            next_ready = usb_host_online && comm_channel_id != 0 && comm_peer_online;
-            ready_changed = old_ready != next_ready;
         }
-        if (host_changed) {
-            ReportUSBHostOnlineChanged(body.online(), body.reason());
-        }
-        if (ready_changed) {
-            ReportCommChannelReadyChanged(next_ready);
-        }
+
     }
 
     void HandleCommPeerState(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_comm_peer_state()) {
+        if (!packet.payload().has_p2a_ntf_comm_peer_state()) {
             return;
         }
-        const auto& body = packet.payload().ntf_comm_peer_state();
-        bool changed = false;
-        bool next_ready = false;
+        const auto& body = packet.payload().p2a_ntf_comm_peer_state();
         {
             std::lock_guard<std::mutex> lk(session_mutex);
             if (comm_channel_id == 0 || body.channel_id() != comm_channel_id) {
                 return;
             }
-            const bool old_ready = usb_host_online && comm_channel_id != 0 && comm_peer_online;
             comm_peer_online = body.online();
-            next_ready = usb_host_online && comm_channel_id != 0 && comm_peer_online;
-            changed = old_ready != next_ready;
         }
         SdkLog("INFO", "comm peer state", "track_id=", packet.header().track_id(),
                "channel_id=", body.channel_id(), "online=", body.online(),
                "reason=", body.reason());
-        if (changed) {
-            ReportCommChannelReadyChanged(next_ready);
-        }
-    }
 
-    void HandleCommChannelDataPacket(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_comm_channel_data()) {
-            return;
-        }
-        const auto& body = packet.payload().ntf_comm_channel_data();
-        if (body.payload().empty() ||
-            body.payload().size() > kCommChannelMaxPayloadSize) {
-            SdkLog("WARN", "invalid channel receive payload size",
-                   "payload_bytes=", body.payload().size());
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lk(session_mutex);
-            if (comm_channel_id == 0 || body.channel_id() != comm_channel_id) {
-                return;
-            }
-        }
-        SdkLog("DEBUG", "channel receive", "track_id=", packet.header().track_id(),
-               "channel_id=", body.channel_id(), "payload_bytes=", body.payload().size());
-        ReportCommChannelData(body.payload());
-    }
-
-    void HandleAppConfigRequestPacket(const ProtoPackage& packet) {
-        if (!packet.payload().has_ntf_app_config_request()) {
-            return;
-        }
-        const auto& request = packet.payload().ntf_app_config_request();
-        const bool valid_operation =
-            request.operation() == kavio::ipc::proto::APP_CONFIG_OPERATION_GET ||
-            request.operation() == kavio::ipc::proto::APP_CONFIG_OPERATION_SET;
-        const bool valid_payload =
-            request.config_json().size() <= kAppConfigMaxPayloadSize &&
-            (request.operation() != kavio::ipc::proto::APP_CONFIG_OPERATION_GET ||
-             request.config_json().empty()) &&
-            (request.operation() != kavio::ipc::proto::APP_CONFIG_OPERATION_SET ||
-             !request.config_json().empty());
-        if (request.request_id() == 0 || !valid_operation || !valid_payload) {
-            SdkLog("WARN", "invalid app config request",
-                   "request_id=", request.request_id(),
-                   "operation=", static_cast<int>(request.operation()),
-                   "bytes=", request.config_json().size());
-            return;
-        }
-        SdkLog("INFO", "app config request",
-               "request_id=", request.request_id(),
-               "operation=", static_cast<int>(request.operation()),
-               "bytes=", request.config_json().size());
-        if (!ReportAppConfigRequest(request)) {
-            auto response_packet = MakePackage(
-                kavio::ipc::proto::MSG_NTF_APP_CONFIG_RESPONSE,
-                request.request_id());
-            auto* response = response_packet.mutable_payload()
-                ->mutable_ntf_app_config_response();
-            response->set_request_id(request.request_id());
-            response->set_operation(request.operation());
-            response->set_error_code(static_cast<int32_t>(StatusCode::Common_Unsupported));
-            response->set_error_message(
-                "App did not register on_app_config_request callback");
-            const Status status = SendPacket(response_packet);
-            if (!status.ok()) {
-                SdkLog("ERROR", "automatic app config rejection failed",
-                       "request_id=", request.request_id(),
-                       "reason=", status.message);
-            }
-        }
     }
 
     void HandlePacket(const ProtoPackage& packet) {
+        bool forward = true;
         SdkLog("DEBUG", "IPC receive", "msg_type=", static_cast<int>(packet.header().msg_type()),
                "track_id=", packet.header().track_id(),
                "serialized_bytes=", packet.ByteSizeLong());
         switch (packet.header().msg_type()) {
-        case kavio::ipc::proto::MSG_ERROR:
+        case kavio::ipc::proto::MSG_P2A_RSP_ERROR:
             HandleError(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_STATUS_REPLY:
+        case kavio::ipc::proto::MSG_P2A_RSP_STATUS:
             HandleStatusReply(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_SESSION_CREATED:
+        case kavio::ipc::proto::MSG_P2A_RSP_CREATE_SESSION:
             HandleSessionCreated(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_RUNTIME_DATA:
+        case kavio::ipc::proto::MSG_P2A_RSP_RUNTIME_DATA:
+        case kavio::ipc::proto::MSG_P2A_NTF_RUNTIME_DATA:
             HandleRuntimeDataPacket(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_USER_CONFIG:
-            HandleUserConfigPacket(packet);
-            break;
-        case kavio::ipc::proto::MSG_NTF_RX_SHM_READY:
+        case kavio::ipc::proto::MSG_P2A_NTF_RX_SHM_READY:
             HandleRxShmReady(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_RX_SHM_INVALIDATED:
+        case kavio::ipc::proto::MSG_P2A_NTF_RX_SHM_INVALIDATED:
             HandleRxShmInvalidated(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_TX_SHM_CREATED:
-            HandleTxCreated(packet);
+        case kavio::ipc::proto::MSG_P2A_NTF_ENCODE_STREAM_INVALIDATED:
+            HandleH264Invalidated(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_STATS_REPLY:
-            HandleStatsReply(packet);
+        case kavio::ipc::proto::MSG_P2A_NTF_ENCODE_FRAME_READY:
+            HandleH264FrameReady(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_USB_HOST_ONLINE_STATE:
+        case kavio::ipc::proto::MSG_P2A_NTF_USB_HOST_STATE:
             HandleUSBHostOnlineState(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_COMM_PEER_STATE:
+        case kavio::ipc::proto::MSG_P2A_NTF_COMM_PEER_STATE:
             HandleCommPeerState(packet);
             break;
-        case kavio::ipc::proto::MSG_NTF_COMM_CHANNEL_DATA:
-            HandleCommChannelDataPacket(packet);
+        case kavio::ipc::proto::MSG_P2A_DATA_COMM_CHANNEL: {
+            forward = packet.payload().has_p2a_data_comm_channel();
+            if (forward) {
+                const auto& body = packet.payload().p2a_data_comm_channel();
+                forward = !body.payload().empty() &&
+                          body.payload().size() <= kCommChannelMaxPayloadSize;
+                if (forward) {
+                    std::lock_guard<std::mutex> lk(session_mutex);
+                    forward = comm_channel_id != 0 && body.channel_id() == comm_channel_id;
+                }
+            }
             break;
-        case kavio::ipc::proto::MSG_NTF_APP_CONFIG_REQUEST:
-            HandleAppConfigRequestPacket(packet);
+        }
+        case kavio::ipc::proto::MSG_P2A_REQ_GET_APP_CONFIG: {
+            forward = false;
+            if (packet.header().track_id() == 0 ||
+                !packet.payload().has_p2a_req_get_app_config()) break;
+
+            auto response = MakePackage(kavio::ipc::proto::MSG_A2P_RSP_GET_APP_CONFIG,
+                                        packet.header().track_id());
+            auto* reply = response.mutable_payload()->mutable_a2p_rsp_get_app_config();
+            reply->set_schema_description_json(app_config.DescriptionJson());
+            reply->set_config_json(app_config.CurrentJson());
+            const auto st = SendPacket(response);
+            if (!st.ok()) {
+                SdkLog("ERROR", "GET app config reply failed", "track_id=",
+                       packet.header().track_id(), "reason=", st.message);
+            }
             break;
+        }
+        case kavio::ipc::proto::MSG_P2A_REQ_SET_APP_CONFIG: {
+            forward = false;
+            if (packet.header().track_id() == 0 ||
+                !packet.payload().has_p2a_req_set_app_config()) break;
+            const auto& json = packet.payload().p2a_req_set_app_config().config_json();
+            if (json.empty() || json.size() > kAppConfigMaxPayloadSize) break;
+
+            Json::Value value;
+            Json::CharReaderBuilder reader_options;
+            std::string error;
+            std::unique_ptr<Json::CharReader> reader(reader_options.newCharReader());
+            Status st = reader->parse(json.data(), json.data() + json.size(), &value, &error)
+                ? app_config.Update(value)
+                : Status::Error(StatusCode::Common_InvalidArgument,
+                                "invalid configuration JSON: " + error);
+
+            auto response = MakePackage(kavio::ipc::proto::MSG_A2P_RSP_SET_APP_CONFIG,
+                                        packet.header().track_id());
+            auto* reply = response.mutable_payload()->mutable_a2p_rsp_set_app_config();
+            if (st.ok()) {
+                reply->set_config_json(app_config.CurrentJson());
+            } else {
+                reply->set_error_code(static_cast<int32_t>(st.code));
+                reply->set_error_message(st.message);
+            }
+            const auto sent = SendPacket(response);
+            if (!sent.ok()) {
+                SdkLog("ERROR", "SET app config reply failed", "track_id=",
+                       packet.header().track_id(), "reason=", sent.message);
+            }
+            forward = st.ok();  // Only committed SET reaches the App OnMessage callback.
+            break;
+        }
         default:
             break;
         }
+        if (forward) Enqueue(packet);
     }
 
     void RecvLoop() {
-        g_sdk_callback_owner = this;
         while (!stop_requested.load(std::memory_order_acquire)) {
             ProtoPackage packet;
             const auto st = socket->Receive(packet);
@@ -1143,7 +784,6 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
             }
             HandlePacket(packet);
         }
-        g_sdk_callback_owner = nullptr;
     }
 
     Status StartConnectionAttemptLocked() {
@@ -1181,8 +821,8 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
 
         const uint64_t create_track_id = AllocTrackId();
         session_create_track_id.store(create_track_id, std::memory_order_release);
-        auto req = MakePackage(kavio::ipc::proto::MSG_REQ_SESSION_CREATE, create_track_id);
-        auto* body = req.mutable_payload()->mutable_req_session_create();
+        auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_CREATE_SESSION, create_track_id);
+        auto* body = req.mutable_payload()->mutable_a2p_req_create_session();
         body->set_client_name(ResolveClientName(session_options));
         body->set_client_pid(ResolveClientPid(session_options));
         auto* sdk_version = body->mutable_sdk_version();
@@ -1190,11 +830,9 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
         sdk_version->set_minor(KAVIO_SDK_VERSION_MINOR);
         sdk_version->set_patch(KAVIO_SDK_VERSION_PATCH);
         auto* rx = body->mutable_rx_params();
-        rx->set_enabled(rx_params.enabled);
-        rx->set_frame_sample_interval(rx_params.frame_sample_interval);
+        rx->CopyFrom(rx_params);
         auto* tx = body->mutable_tx_params();
-        tx->set_enabled(tx_params.enabled);
-        tx->set_z_order(tx_params.z_order);
+        tx->CopyFrom(tx_params);
 
         SdkLog("INFO", "session create send", "track_id=", create_track_id,
                "client_name=", body->client_name(), "reported_pid=", body->client_pid(),
@@ -1313,12 +951,8 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
             state_changed = SetClientStateLocked(ClientState::kInvalid);
             runtime_snapshot = runtime_data;
         }
-        FailAllPendingRequests(Status::Error(StatusCode::Common_Cancelled, "client stopped"));
-        ReportRuntimeDataChanged(runtime_snapshot);
-        ReportRxChanged(prev_rx, next_rx);
-        if (state_changed) {
-            ReportClientInvalid();
-        }
+        if (state_changed && !stop_requested.load(std::memory_order_acquire))
+            EnqueueDisconnected();
         worker_running.store(false, std::memory_order_release);
         SdkLog("INFO", "worker leave");
         connection_cv.notify_all();
@@ -1347,27 +981,27 @@ bool TxSurface::IsValid() const {
         return false;
     }
     const auto owner = impl_->owner.lock();
-    return owner && owner->IsTxSurfaceCurrent(impl_->info.id, impl_->shm) && impl_->shm->IsValid();
+    return owner && owner->IsTxSurfaceCurrent(impl_->info.id(), impl_->shm) && impl_->shm->IsValid();
 }
 
 uint32_t TxSurface::id() const {
-    return impl_ ? impl_->info.id : 0;
+    return impl_ ? impl_->info.id() : 0;
 }
 
 uint32_t TxSurface::width() const {
-    return impl_ ? impl_->info.width : 0;
+    return impl_ ? impl_->info.width() : 0;
 }
 
 uint32_t TxSurface::height() const {
-    return impl_ ? impl_->info.height : 0;
+    return impl_ ? impl_->info.height() : 0;
 }
 
 uint32_t TxSurface::stride() const {
-    return impl_ ? impl_->info.stride : 0;
+    return impl_ ? impl_->info.stride() : 0;
 }
 
 PixelFormat TxSurface::pixel_format() const {
-    return impl_ ? impl_->info.pixel_format : PixelFormat::kUnknown;
+    return impl_ ? FromProto(impl_->info.pixel_format()) : PixelFormat::kUnknown;
 }
 
 Status TxSurface::WriteFrame(const ImageFrame& frame) {
@@ -1375,10 +1009,10 @@ Status TxSurface::WriteFrame(const ImageFrame& frame) {
         return Status::Error(StatusCode::Common_NotConnected, "tx surface is not valid");
     }
 
-    if (frame.width != impl_->info.width ||
-        frame.height != impl_->info.height ||
-        frame.stride != impl_->info.stride ||
-        frame.pixel_format != impl_->info.pixel_format) {
+    if (frame.width != impl_->info.width() ||
+        frame.height != impl_->info.height() ||
+        frame.stride != impl_->info.stride() ||
+        frame.pixel_format != FromProto(impl_->info.pixel_format())) {
         return Status::Error(StatusCode::Common_InvalidArgument, "frame geometry does not match tx surface");
     }
 
@@ -1418,26 +1052,13 @@ Status TxSurface::Clear() {
     return Status::Ok();
 }
 
-Status TxSurface::Destroy(std::chrono::milliseconds timeout) {
-    if (!impl_ || !impl_->shm) {
+Status TxSurface::Destroy(uint64_t& request_id) {
+    if (!impl_ || !impl_->shm)
         return Status::Error(StatusCode::Common_InvalidArgument, "tx surface is not valid");
-    }
-
     auto owner = impl_->owner.lock();
-    if (!owner) {
-        return Status::Error(StatusCode::Common_NotConnected, "tx surface owner is not available");
-    }
-
-    const uint32_t shm_id = impl_->info.id;
-    Status st = owner->DestroyTxSurface(shm_id, impl_->shm, timeout);
-    if (!st.ok()) {
-        return st;
-    }
-
-    impl_->shm.reset();
-    impl_->owner.reset();
-    impl_->info = {};
-    return Status::Ok();
+    if (!owner)
+        return Status::Error(StatusCode::Common_NotConnected, "tx surface owner is unavailable");
+    return owner->DestroyTxSurface(impl_->info.id(), impl_->shm, request_id);
 }
 
 KavioClient::KavioClient() : impl_(std::make_shared<Impl>()) {}
@@ -1445,17 +1066,34 @@ KavioClient::KavioClient() : impl_(std::make_shared<Impl>()) {}
 KavioClient::~KavioClient() {
     Stop();
     impl_->JoinWorkerThread();
+    {
+        std::lock_guard<std::mutex> lk(impl_->queue_mutex);
+        impl_->dispatch_stop = true;
+    }
+    impl_->queue_cv.notify_all();
+    if (impl_->dispatch_thread.joinable() &&
+        impl_->dispatch_thread.get_id() != std::this_thread::get_id())
+        impl_->dispatch_thread.join();
 }
 
-Status KavioClient::Start(const SessionOptions& options, Callbacks callbacks) {
-    if (options.rx_params.frame_sample_interval == 0) {
+Status KavioClient::Start(const kavio::ipc::proto::A2PReqCreateSessionPb& options,
+                          IClientMessageHandler& handler,
+                          bool auto_query_runtime_on_connect) {
+    auto effective = options;
+    if (!effective.has_rx_params()) {
+        auto* rx = effective.mutable_rx_params();
+        rx->set_enabled(true);
+        rx->set_frame_sample_interval(1);
+    }
+    if (!effective.has_tx_params()) effective.mutable_tx_params();
+    if (effective.rx_params().frame_sample_interval() == 0) {
         return Status::Error(StatusCode::Common_InvalidArgument,
                              "frame_sample_interval must be >= 1");
     }
 
     SdkLog("INFO", "Start requested", "client_name=", ResolveClientName(options),
-           "pid=", ResolveClientPid(options), "rx_enabled=", options.rx_params.enabled,
-           "tx_enabled=", options.tx_params.enabled, "socket=", DefaultIpcSocketPath());
+           "pid=", ResolveClientPid(options), "rx_enabled=", effective.rx_params().enabled(),
+           "tx_enabled=", effective.tx_params().enabled(), "socket=", DefaultIpcSocketPath());
     {
         std::lock_guard<std::mutex> lifecycle_lk(impl_->lifecycle_mutex);
         if (impl_->worker_running.load(std::memory_order_acquire)) {
@@ -1467,13 +1105,17 @@ Status KavioClient::Start(const SessionOptions& options, Callbacks callbacks) {
         impl_->run_thread.join();
     }
 
+    const auto config_status = impl_->app_config.Initialize();
+    if (!config_status.ok()) return config_status;
+
     {
         std::lock_guard<std::mutex> lifecycle_lk(impl_->lifecycle_mutex);
         std::lock_guard<std::mutex> session_lk(impl_->session_mutex);
-        impl_->session_options = options;
-        impl_->callbacks = std::move(callbacks);
-        impl_->rx_params = options.rx_params;
-        impl_->tx_params = options.tx_params;
+        impl_->session_options = effective;
+        impl_->auto_query_runtime_on_connect = auto_query_runtime_on_connect;
+        impl_->handler = &handler;
+        impl_->rx_params = effective.rx_params();
+        impl_->tx_params = effective.tx_params();
         impl_->stop_requested.store(false, std::memory_order_release);
         impl_->connected.store(false, std::memory_order_release);
         impl_->transport_connected.store(false, std::memory_order_release);
@@ -1484,29 +1126,28 @@ Status KavioClient::Start(const SessionOptions& options, Callbacks callbacks) {
         impl_->client_state = ClientState::kInvalid;
     }
 
+    if (impl_->dispatch_thread.joinable()) impl_->dispatch_thread.join();
+    {
+        std::lock_guard<std::mutex> lk(impl_->queue_mutex);
+        impl_->messages.clear(); impl_->queue_bytes = 0; impl_->dispatch_stop = false;
+    }
+    impl_->dispatch_thread = std::thread([impl = impl_] { impl->DispatchLoop(); });
     impl_->run_thread = std::thread([impl = impl_] { impl->RunLoop(); });
     return Status::Ok();
 }
 
 void KavioClient::Stop() {
     SdkLog("INFO", "Stop requested");
-    bool state_changed = false;
-    RuntimeData runtime_snapshot;
-    RxInfo prev_rx;
-    RxInfo next_rx;
     {
         std::lock_guard<std::mutex> lk(impl_->session_mutex);
-        prev_rx = impl_->BuildRxInfoLocked();
         impl_->stop_requested.store(true, std::memory_order_release);
         impl_->connected.store(false, std::memory_order_release);
         impl_->transport_connected.store(false, std::memory_order_release);
         impl_->ResetSessionDataLocked();
-        next_rx = impl_->BuildRxInfoLocked();
-        state_changed = impl_->SetClientStateLocked(ClientState::kInvalid);
-        runtime_snapshot = impl_->runtime_data;
+        impl_->SetClientStateLocked(ClientState::kInvalid);
     }
 
-    impl_->FailAllPendingRequests(Status::Error(StatusCode::Common_Cancelled, "client stopped"));
+
 
     {
         std::lock_guard<std::mutex> lk(impl_->socket_mutex);
@@ -1515,11 +1156,9 @@ void KavioClient::Stop() {
         }
     }
 
-    impl_->ReportRuntimeDataChanged(runtime_snapshot);
-    impl_->ReportRxChanged(prev_rx, next_rx);
-    if (state_changed) {
-        impl_->ReportClientInvalid();
-    }
+    { std::lock_guard<std::mutex> lk(impl_->queue_mutex);
+      impl_->messages.clear(); impl_->queue_bytes = 0; impl_->dispatch_stop = true; }
+    impl_->queue_cv.notify_all();
     impl_->connection_cv.notify_all();
 }
 
@@ -1539,123 +1178,39 @@ KavioClient::RuntimeData KavioClient::GetRuntimeData() const {
     return impl_->SnapshotRuntimeData();
 }
 
-KavioClient::UserConfig KavioClient::GetUserConfig() const {
-    return impl_->SnapshotUserConfig();
-}
 
 RxInfo KavioClient::GetRxInfo() const {
     return impl_->SnapshotRxInfo();
 }
 
-Status KavioClient::SetRxParams(const RxParams& params,
-                                std::chrono::milliseconds timeout) {
-    if (params.frame_sample_interval == 0) {
-        return Status::Error(StatusCode::Common_InvalidArgument,
-                             "frame_sample_interval must be >= 1");
-    }
-
-    Status st = impl_->EnsureBlockingAllowed();
-    if (!st.ok()) {
-        return st;
-    }
-    if (!impl_->IsSessionReady()) {
+Status KavioClient::SetRxParams(const kavio::ipc::proto::RxParamsPb& params, uint64_t& request_id) {
+    if (!params.frame_sample_interval())
+        return Status::Error(StatusCode::Common_InvalidArgument, "frame_sample_interval must be >= 1");
+    if (!impl_->IsSessionReady())
         return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-    }
-
-    const uint64_t track_id = impl_->AllocTrackId();
-    auto pending = std::make_shared<PendingRequest<Status>>();
-    pending->track_id = track_id;
-    pending->kind = PendingKind::kSetRxParams;
-    pending->deadline = std::chrono::steady_clock::now() + timeout;
-    auto future = pending->promise.get_future();
-    {
-        std::lock_guard<std::mutex> lk(impl_->pending_mutex);
-        impl_->pending_status_requests[track_id] = pending;
-    }
-
-    auto req = MakePackage(kavio::ipc::proto::MSG_REQ_SET_RX_PARAMS, track_id);
-    auto* body = req.mutable_payload()->mutable_req_set_rx_params()->mutable_params();
-    body->set_enabled(params.enabled);
-    body->set_frame_sample_interval(params.frame_sample_interval);
-    st = impl_->SendPacket(req);
-    if (!st.ok()) {
-        impl_->CancelPendingStatus(track_id, st);
-        return st;
-    }
-
-    if (future.wait_for(timeout) != std::future_status::ready) {
-        const Status timeout_status = Status::Error(StatusCode::Common_Timeout,
-                                                    "set rx params timeout");
-        impl_->CancelPendingStatus(track_id, timeout_status);
-        return timeout_status;
-    }
-
-    Status result = future.get();
-    if (result.ok()) {
-        RxInfo prev_rx;
-        RxInfo next_rx;
-        {
-            std::lock_guard<std::mutex> lk(impl_->session_mutex);
-            prev_rx = impl_->BuildRxInfoLocked();
-            impl_->rx_params = params;
-            impl_->session_options.rx_params = params;
-            if (!params.enabled) {
-                impl_->rx_shm.reset();
-                impl_->session_info.rx_shm = {};
-                impl_->rx_frame_ready = false;
-            }
-            next_rx = impl_->BuildRxInfoLocked();
-        }
-        impl_->ReportRxChanged(prev_rx, next_rx);
-    }
-    return result;
+    const auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_SET_RX_PARAMS, id);
+    auto* p = req.mutable_payload()->mutable_a2p_req_set_rx_params()->mutable_params();
+    p->CopyFrom(params);
+    { std::lock_guard<std::mutex> lk(impl_->pending_mutex); impl_->pending_rx_params[id] = params; }
+    auto st = impl_->SendPacket(req);
+    if (!st.ok()) { std::lock_guard<std::mutex> lk(impl_->pending_mutex); impl_->pending_rx_params.erase(id); return st; }
+    request_id = id;
+    return Status::Ok();
 }
 
-Status KavioClient::SetTxParams(const TxParams& params,
-                                std::chrono::milliseconds timeout) {
-    Status st = impl_->EnsureBlockingAllowed();
-    if (!st.ok()) {
-        return st;
-    }
-    if (!impl_->IsSessionReady()) {
+Status KavioClient::SetTxParams(const kavio::ipc::proto::TxParamsPb& params, uint64_t& request_id) {
+    if (!impl_->IsSessionReady())
         return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-    }
-
-    const uint64_t track_id = impl_->AllocTrackId();
-    auto pending = std::make_shared<PendingRequest<Status>>();
-    pending->track_id = track_id;
-    pending->kind = PendingKind::kSetTxParams;
-    pending->deadline = std::chrono::steady_clock::now() + timeout;
-    auto future = pending->promise.get_future();
-    {
-        std::lock_guard<std::mutex> lk(impl_->pending_mutex);
-        impl_->pending_status_requests[track_id] = pending;
-    }
-
-    auto req = MakePackage(kavio::ipc::proto::MSG_REQ_SET_TX_PARAMS, track_id);
-    auto* body = req.mutable_payload()->mutable_req_set_tx_params()->mutable_params();
-    body->set_enabled(params.enabled);
-    body->set_z_order(params.z_order);
-    st = impl_->SendPacket(req);
-    if (!st.ok()) {
-        impl_->CancelPendingStatus(track_id, st);
-        return st;
-    }
-
-    if (future.wait_for(timeout) != std::future_status::ready) {
-        const Status timeout_status = Status::Error(StatusCode::Common_Timeout,
-                                                    "set tx params timeout");
-        impl_->CancelPendingStatus(track_id, timeout_status);
-        return timeout_status;
-    }
-
-    Status result = future.get();
-    if (result.ok()) {
-        std::lock_guard<std::mutex> lk(impl_->session_mutex);
-        impl_->tx_params = params;
-        impl_->session_options.tx_params = params;
-    }
-    return result;
+    const auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_SET_TX_PARAMS, id);
+    auto* p = req.mutable_payload()->mutable_a2p_req_set_tx_params()->mutable_params();
+    p->CopyFrom(params);
+    { std::lock_guard<std::mutex> lk(impl_->pending_mutex); impl_->pending_tx_params[id] = params; }
+    auto st = impl_->SendPacket(req);
+    if (!st.ok()) { std::lock_guard<std::mutex> lk(impl_->pending_mutex); impl_->pending_tx_params.erase(id); return st; }
+    request_id = id;
+    return Status::Ok();
 }
 
 Status KavioClient::ReadLatestRxFrame(ImageFrame& out_frame) {
@@ -1687,153 +1242,170 @@ Status KavioClient::ReadLatestRxFrame(ImageFrame& out_frame) {
     return Status::Ok();
 }
 
-Status KavioClient::CreateTxSurface(uint32_t width,
-                                    uint32_t height,
-                                    TxSurface& out_surface,
-                                    std::chrono::milliseconds timeout) {
-    if (width == 0 || height == 0) {
-        return Status::Error(StatusCode::Common_InvalidArgument, "invalid tx surface size");
-    }
-
-    Status st = impl_->EnsureBlockingAllowed();
-    if (!st.ok()) {
-        return st;
-    }
-
-    if (!impl_->IsSessionReady()) {
+Status KavioClient::CreateTxSurface(uint32_t width, uint32_t height, uint64_t& request_id) {
+    if (!width || !height)
+        return Status::Error(StatusCode::Common_InvalidArgument, "invalid tx size");
+    if (!impl_->IsSessionReady())
         return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-    }
+    auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_CREATE_TX_SHM, id);
+    auto* p = req.mutable_payload()->mutable_a2p_req_create_tx_shm();
+    p->set_width(width); p->set_height(height);
+    p->set_pixel_format(kavio::ipc::proto::PIXEL_FORMAT_BGRA8888);
+    auto st = impl_->SendPacket(req);
+    if (st.ok()) request_id = id;
+    return st;
+}
 
-    const uint64_t track_id = impl_->AllocTrackId();
-    auto pending = std::make_shared<PendingRequest<TxSurfaceResult>>();
-    pending->track_id = track_id;
-    pending->kind = PendingKind::kCreateTxSurface;
-    pending->deadline = std::chrono::steady_clock::now() + timeout;
-    auto future = pending->promise.get_future();
+Status KavioClient::OpenTxSurface(const kavio::ipc::proto::ShmInfoPb& remote,
+                                  TxSurface& surface) {
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    const auto& info = remote;
+    if (!info.id() || info.name().empty())
+        return Status::Error(StatusCode::Common_InvalidArgument, "invalid tx shm info");
+    if (surface.IsValid())
+        return Status::Error(StatusCode::Common_InvalidState,
+                             "destroy the existing surface before opening another");
+    std::string error;
+    FrameShm::OpenConfig cfg; cfg.name = info.name();
+    auto opened = FrameShm::Open(cfg, &error);
+    if (!opened || !opened->IsValid())
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             error.empty() ? "unable to open TX SHM" : error);
+    auto shared = std::shared_ptr<FrameShm>(opened.release());
     {
-        std::lock_guard<std::mutex> lk(impl_->pending_mutex);
-        impl_->pending_tx_create_requests[track_id] = pending;
+        std::lock_guard<std::mutex> lk(impl_->session_mutex);
+        if (!impl_->IsSessionReadyLocked())
+            return Status::Error(StatusCode::Common_NotConnected, "session disconnected");
+        if (impl_->tx_shms.count(info.id()))
+            return Status::Error(StatusCode::Common_AlreadyExists, "TX SHM already opened");
+        impl_->tx_shms[info.id()] = shared;
     }
-
-    auto req = MakePackage(kavio::ipc::proto::MSG_REQ_CREATE_TX_SHM, track_id);
-    auto* body = req.mutable_payload()->mutable_req_create_tx_shm();
-    body->set_width(width);
-    body->set_height(height);
-    body->set_pixel_format(kavio::ipc::proto::PIXEL_FORMAT_BGRA8888);
-
-    st = impl_->SendPacket(req);
-    if (!st.ok()) {
-        impl_->CancelPendingTxCreate(track_id, st);
-        return st;
-    }
-
-    if (future.wait_for(timeout) != std::future_status::ready) {
-        const Status timeout_status = Status::Error(StatusCode::Common_Timeout,
-                                                    "create tx surface timeout");
-        impl_->CancelPendingTxCreate(track_id, timeout_status);
-        return timeout_status;
-    }
-
-    TxSurfaceResult result = future.get();
-    if (!result.status.ok()) {
-        return result.status;
-    }
-
-    if (!out_surface.impl_) {
-        out_surface.impl_ = std::make_unique<TxSurface::Impl>();
-    }
-    out_surface.impl_->info = result.info;
-    out_surface.impl_->shm = result.shm;
-    out_surface.impl_->owner = impl_;
+    if (!surface.impl_) surface.impl_ = std::make_unique<TxSurface::Impl>();
+    surface.impl_->info = info;
+    surface.impl_->shm = shared;
+    surface.impl_->owner = impl_;
     return Status::Ok();
 }
 
-Status KavioClient::CloseSession(uint32_t session_id,
-                                 std::chrono::milliseconds timeout) {
-    if (session_id == 0) {
-        return Status::Error(StatusCode::Common_InvalidArgument, "session_id must be > 0");
-    }
-
-    Status st = impl_->EnsureBlockingAllowed();
-    if (!st.ok()) {
-        return st;
-    }
-
-    if (!impl_->IsSessionReady()) {
+Status KavioClient::DestroyTxSurface(uint32_t shm_id, uint64_t& request_id) {
+    if (!shm_id)
+        return Status::Error(StatusCode::Common_InvalidArgument, "invalid tx shm id");
+    if (!impl_->IsSessionReady())
         return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-    }
-
-    const uint64_t track_id = impl_->AllocTrackId();
-    auto pending = std::make_shared<PendingRequest<Status>>();
-    pending->track_id = track_id;
-    pending->kind = PendingKind::kCloseSession;
-    pending->deadline = std::chrono::steady_clock::now() + timeout;
-    auto future = pending->promise.get_future();
-    {
-        std::lock_guard<std::mutex> lk(impl_->pending_mutex);
-        impl_->pending_status_requests[track_id] = pending;
-    }
-
-    auto req = MakePackage(kavio::ipc::proto::MSG_REQ_CLOSE_SESSION, track_id);
-    req.mutable_payload()->mutable_req_close_session()->set_session_id(session_id);
-    st = impl_->SendPacket(req);
-    if (!st.ok()) {
-        impl_->CancelPendingStatus(track_id, st);
-        return st;
-    }
-
-    if (future.wait_for(timeout) != std::future_status::ready) {
-        const Status timeout_status = Status::Error(StatusCode::Common_Timeout,
-                                                    "close session timeout");
-        impl_->CancelPendingStatus(track_id, timeout_status);
-        return timeout_status;
-    }
-
-    return future.get();
+    auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_DESTROY_TX_SHM, id);
+    req.mutable_payload()->mutable_a2p_req_destroy_tx_shm()->set_shm_id(shm_id);
+    { std::lock_guard<std::mutex> lk(impl_->pending_mutex);
+      impl_->pending_tx_destroy[id] = shm_id; }
+    auto st = impl_->SendPacket(req);
+    if (!st.ok()) { std::lock_guard<std::mutex> lk(impl_->pending_mutex);
+                    impl_->pending_tx_destroy.erase(id); return st; }
+    request_id = id;
+    return Status::Ok();
 }
 
-Status KavioClient::QueryStats(StatsReply& out_stats,
-                               std::chrono::milliseconds timeout) {
-    Status st = impl_->EnsureBlockingAllowed();
-    if (!st.ok()) {
-        return st;
-    }
-
-    if (!impl_->IsSessionReady()) {
+Status KavioClient::CloseSession(uint32_t session_id, uint64_t& request_id) {
+    if (!session_id)
+        return Status::Error(StatusCode::Common_InvalidArgument, "session_id is zero");
+    if (!impl_->IsSessionReady())
         return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-    }
+    auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_CLOSE_SESSION, id);
+    req.mutable_payload()->mutable_a2p_req_close_session()->set_session_id(session_id);
+    auto st = impl_->SendPacket(req);
+    if (st.ok()) request_id = id;
+    return st;
+}
 
-    const uint64_t track_id = impl_->AllocTrackId();
-    auto pending = std::make_shared<PendingRequest<StatsReplyResult>>();
-    pending->track_id = track_id;
-    pending->kind = PendingKind::kQueryStats;
-    pending->deadline = std::chrono::steady_clock::now() + timeout;
-    auto future = pending->promise.get_future();
+Status KavioClient::QueryStats(uint64_t& request_id) {
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_QUERY_STATS, id);
+    req.mutable_payload()->mutable_a2p_req_query_stats()->set_all_sessions(false);
+    auto st = impl_->SendPacket(req);
+    if (st.ok()) request_id = id;
+    return st;
+}
+
+Status KavioClient::SubscribeH264Stream(uint64_t& request_id) {
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_CREATE_ENCODE_STREAM, id);
+    req.mutable_payload()->mutable_a2p_req_create_encode_stream();
+    auto st = impl_->SendPacket(req);
+    if (st.ok()) request_id = id;
+    return st;
+}
+
+Status KavioClient::OpenH264Stream(const kavio::ipc::proto::EncodedStreamShmInfoPb& remote) {
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    if (!remote.stream_id() || remote.name().empty())
+        return Status::Error(StatusCode::Common_InvalidArgument, "invalid h264 shm info");
+    EncodedStreamShm::OpenConfig cfg;
+    cfg.name = remote.name(); cfg.size = static_cast<size_t>(remote.size());
+    cfg.access = ShmAccess::ReadOnly;
+    std::string error;
+    auto opened = EncodedStreamShm::Open(cfg, &error);
+    if (!opened)
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             error.empty() ? "unable to open H264 SHM" : error);
     {
-        std::lock_guard<std::mutex> lk(impl_->pending_mutex);
-        impl_->pending_stats_requests[track_id] = pending;
+        std::lock_guard<std::mutex> lk(impl_->session_mutex);
+        if (!impl_->IsSessionReadyLocked())
+            return Status::Error(StatusCode::Common_NotConnected, "session disconnected");
+        if (impl_->h264_shm)
+            return Status::Error(StatusCode::Common_AlreadyExists, "H264 SHM already open");
+        impl_->h264_stream_id = remote.stream_id();
+        impl_->h264_shm = std::shared_ptr<EncodedStreamShm>(opened.release());
     }
+    return Status::Ok();
+}
 
-    auto req = MakePackage(kavio::ipc::proto::MSG_REQ_QUERY_STATS, track_id);
-    req.mutable_payload()->mutable_req_query_stats()->set_all_sessions(false);
-    st = impl_->SendPacket(req);
-    if (!st.ok()) {
-        impl_->CancelPendingStats(track_id, st);
-        return st;
-    }
+Status KavioClient::UnsubscribeH264Stream(uint32_t stream_id, uint64_t& request_id) {
+    if (!stream_id)
+        return Status::Error(StatusCode::Common_InvalidArgument, "stream_id is zero");
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_DESTROY_ENCODE_STREAM, id);
+    req.mutable_payload()->mutable_a2p_req_destroy_encode_stream()->set_stream_id(stream_id);
+    { std::lock_guard<std::mutex> lk(impl_->pending_mutex);
+      impl_->pending_h264_unsubscribe[id] = stream_id; }
+    auto st = impl_->SendPacket(req);
+    if (!st.ok()) { std::lock_guard<std::mutex> lk(impl_->pending_mutex);
+                    impl_->pending_h264_unsubscribe.erase(id); return st; }
+    request_id = id;
+    return Status::Ok();
+}
 
-    if (future.wait_for(timeout) != std::future_status::ready) {
-        const Status timeout_status = Status::Error(StatusCode::Common_Timeout,
-                                                    "query stats timeout");
-        impl_->CancelPendingStats(track_id, timeout_status);
-        return timeout_status;
-    }
+uint64_t KavioClient::GetLatestH264PacketSeq(uint32_t stream_id) const {
+    std::lock_guard<std::mutex> lk(impl_->session_mutex);
+    if (!impl_->IsSessionReadyLocked() || !impl_->h264_shm ||
+        impl_->h264_stream_id != stream_id) return 0;
+    return impl_->h264_shm->LatestSeq();
+}
 
-    StatsReplyResult result = future.get();
-    if (!result.status.ok()) {
-        return result.status;
-    }
-    out_stats = result.reply;
+Status KavioClient::ReadH264Packet(uint32_t stream_id, uint64_t seq,
+                                  H264Packet& packet) const {
+    std::lock_guard<std::mutex> lk(impl_->session_mutex);
+    if (!impl_->IsSessionReadyLocked() ||
+        !impl_->h264_shm || impl_->h264_stream_id != stream_id)
+        return Status::Error(StatusCode::Common_InvalidState, "H264 stream not active");
+    EncodedPacket local;
+    Status st = impl_->h264_shm->ReadPacket(seq, local);
+    if (!st.ok()) return st;
+    packet.seq = local.seq;
+    packet.pts_us = local.pts_us;
+    packet.dts_us = local.dts_us;
+    packet.timestamp_ns = local.timestamp_ns;
+    packet.flags = local.flags;
+    packet.nal_type = local.nal_type;
+    packet.data = std::move(local.data);
     return Status::Ok();
 }
 
@@ -1843,8 +1415,8 @@ Status KavioClient::SendInputEvent(const kavio::input::proto::InputEventPb& even
     }
 
     const uint64_t track_id = impl_->AllocTrackId();
-    auto req = MakePackage(kavio::ipc::proto::MSG_REQ_INPUT_EVENT, track_id);
-    req.mutable_payload()->mutable_req_input_event()->CopyFrom(event);
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_NTF_INPUT_EVENT, track_id);
+    req.mutable_payload()->mutable_a2p_ntf_input_event()->CopyFrom(event);
     return impl_->SendPacket(req);
 }
 
@@ -1875,8 +1447,8 @@ Status KavioClient::SendCommChannelData(const void* data, size_t size) {
     const uint64_t track_id = impl_->AllocTrackId();
     SdkLog("DEBUG", "channel send", "track_id=", track_id,
            "channel_id=", channel_id, "payload_bytes=", size);
-    auto packet = MakePackage(kavio::ipc::proto::MSG_NTF_COMM_CHANNEL_DATA, track_id);
-    auto* body = packet.mutable_payload()->mutable_ntf_comm_channel_data();
+    auto packet = MakePackage(kavio::ipc::proto::MSG_A2P_DATA_COMM_CHANNEL, track_id);
+    auto* body = packet.mutable_payload()->mutable_a2p_data_comm_channel();
     body->set_channel_id(channel_id);
     if (size > 0) {
         body->set_payload(data, size);
@@ -1894,40 +1466,14 @@ Status KavioClient::SendCommChannelData(const std::vector<uint8_t>& data) {
     return SendCommChannelData(data.empty() ? nullptr : data.data(), data.size());
 }
 
-Status KavioClient::SendAppConfigResponse(
-    const AppConfigResponse& response) {
-    if (!impl_->IsSessionReady()) {
-        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-    }
-    if (response.request_id() == 0) {
-        return Status::Error(StatusCode::Common_InvalidArgument,
-                             "app config response request_id is 0");
-    }
-    if (response.operation() !=
-            kavio::ipc::proto::APP_CONFIG_OPERATION_GET &&
-        response.operation() !=
-            kavio::ipc::proto::APP_CONFIG_OPERATION_SET) {
-        return Status::Error(StatusCode::Common_InvalidArgument,
-                             "invalid app config response operation");
-    }
-    if (response.config_json().size() > kAppConfigMaxPayloadSize) {
-        return Status::Error(StatusCode::Common_InvalidArgument,
-                             "app config JSON exceeds 1 MiB");
-    }
-
-    auto packet = MakePackage(
-        kavio::ipc::proto::MSG_NTF_APP_CONFIG_RESPONSE,
-        response.request_id());
-    packet.mutable_payload()->mutable_ntf_app_config_response()->CopyFrom(response);
-    const Status status = impl_->SendPacket(packet);
-    if (!status.ok()) {
-        SdkLog("ERROR", "app config response send failed",
-               "request_id=", response.request_id(),
-               "operation=", static_cast<int>(response.operation()),
-               "reason=", status.message);
-    }
-    return status;
+Json::Value KavioClient::GetAppConfig() const { return impl_->app_config.Snapshot(); }
+Status KavioClient::UpdateAppConfig(const Json::Value& value) {
+    return impl_->app_config.Update(value);
 }
+Status KavioClient::ResetAppConfigToDefaults() {
+    return impl_->app_config.ResetToDefaults();
+}
+
 
 
 }  // namespace kavio

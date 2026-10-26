@@ -138,6 +138,8 @@ Status IPCSocket::Send(const kavio::ipc::proto::IPCPackagePb& packet) {
     }
 
     const size_t size = packet.ByteSizeLong();
+    if (size == 0 || size > KAVIO_IPC_MAX_PACKAGE_BYTES)
+        return Status::Error(StatusCode::Common_ProtocolError, "IPC packet exceeds maximum size");
     std::vector<uint8_t> payload(size);
     if (!packet.SerializeToArray(payload.data(), static_cast<int>(size))) {
         return Status::Error(StatusCode::Common_ProtocolError, "protobuf serialize failed");
@@ -162,7 +164,7 @@ Status IPCSocket::Receive(kavio::ipc::proto::IPCPackagePb& out_packet) {
     if (!st.ok()) {
         return st;
     }
-    if (len == 0 || len > (16u * 1024u * 1024u)) {
+    if (len == 0 || len > KAVIO_IPC_MAX_PACKAGE_BYTES) {
         return Status::Error(StatusCode::Common_ProtocolError, "invalid packet length");
     }
 

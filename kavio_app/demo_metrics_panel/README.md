@@ -138,6 +138,7 @@ demo_metrics_panel/
 │   └── HostComponent.cpp
 └── package/
     ├── kavio_package.json
+    ├── schema_description.json
     └── icon.png
 ```
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Iterable
 
 # Surface 尺寸与 Host Component 提供的 App Panel 中的 kBoxWidth/kBoxHeight 对应，便于直观看到位置同步。
+# 560x220 取自 Windows Host 面板中的指标盒尺寸；宽高变化须两端同步。
+# 每行宽度 4 字节、字形 2 倍缩放仅是演示排版参数。
 WIDTH = 560
 HEIGHT = 220
 STRIDE = WIDTH * 4
@@ -72,6 +74,7 @@ def _draw_text(image: bytearray, x: int, y: int, text: str) -> None:
 
 
 # 返回值正好是一帧 WIDTH*HEIGHT*4 的连续 BGRA 数据，可直接交给 KavioBridge.write_frame。
+# 纯 CPU 画布每次返回完整 BGRA 数据；调用方按自身业务更新频率决定何时写 TX。
 def render(lines: Iterable[str]) -> bytes:
     image = bytearray(STRIDE * HEIGHT)
     # 整个 TX Surface 就是可拖动矩形；背景略透明，边框不透明。
