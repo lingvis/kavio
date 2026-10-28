@@ -5,6 +5,7 @@ foreach(required_var IN ITEMS
         KAVIO_SHARED_LIBRARY
         KAVIO_PROTO_LIBRARY
         KAVIO_PROTOBUF_LIBRARY
+        KAVIO_PROTOC_EXECUTABLE
         KAVIO_JSONCPP_LIBRARY
         KAVIO_JSONCPP_INCLUDE_DIR
         KAVIO_INCLUDE_DIR
@@ -24,6 +25,7 @@ set(_KAVIO_DEVICE_SDK_MAIN "@KAVIO_MAIN_LIBRARY@")
 set(_KAVIO_DEVICE_SDK_SHARED "@KAVIO_SHARED_LIBRARY@")
 set(_KAVIO_DEVICE_SDK_PROTO "@KAVIO_PROTO_LIBRARY@")
 set(_KAVIO_DEVICE_SDK_PROTOBUF "@KAVIO_PROTOBUF_LIBRARY@")
+set(_KAVIO_DEVICE_SDK_PROTOC "@KAVIO_PROTOC_EXECUTABLE@")
 set(_KAVIO_DEVICE_SDK_JSONCPP "@KAVIO_JSONCPP_LIBRARY@")
 
 foreach(_kavio_required_file IN ITEMS
@@ -31,6 +33,7 @@ foreach(_kavio_required_file IN ITEMS
         "${_KAVIO_DEVICE_SDK_SHARED}"
         "${_KAVIO_DEVICE_SDK_PROTO}"
         "${_KAVIO_DEVICE_SDK_PROTOBUF}"
+        "${_KAVIO_DEVICE_SDK_PROTOC}"
         "${_KAVIO_DEVICE_SDK_JSONCPP}")
     if(NOT EXISTS "${_kavio_required_file}")
         message(FATAL_ERROR
@@ -38,6 +41,10 @@ foreach(_kavio_required_file IN ITEMS
             "Rebuild kavio_sdk/device before configuring the App.")
     endif()
 endforeach()
+
+# Exact host/target-build executable used to generate SDK and App protobuf code.
+# Apps must use this compiler rather than whichever protoc happens to be on PATH.
+set(KAVIO_DEVICE_SDK_PROTOC_EXECUTABLE "${_KAVIO_DEVICE_SDK_PROTOC}")
 
 if(NOT TARGET Kavio::DeviceSdk)
     add_library(Kavio::DeviceSdk STATIC IMPORTED)
@@ -61,6 +68,7 @@ unset(_KAVIO_DEVICE_SDK_MAIN)
 unset(_KAVIO_DEVICE_SDK_SHARED)
 unset(_KAVIO_DEVICE_SDK_PROTO)
 unset(_KAVIO_DEVICE_SDK_PROTOBUF)
+unset(_KAVIO_DEVICE_SDK_PROTOC)
 unset(_KAVIO_DEVICE_SDK_JSONCPP)
 unset(_kavio_required_file)
 ]=])

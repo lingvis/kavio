@@ -260,6 +260,7 @@ add_custom_target(kavio_device_sdk_package
         "-DKAVIO_SHARED_LIBRARY=$<TARGET_FILE:kavio_sdk_shared>"
         "-DKAVIO_PROTO_LIBRARY=$<TARGET_FILE:kavio_sdk_proto>"
         "-DKAVIO_PROTOBUF_LIBRARY=$<TARGET_FILE:${KAVIO_PROTOBUF_LIB_TARGET}>"
+        "-DKAVIO_PROTOC_EXECUTABLE=$<TARGET_FILE:${KAVIO_PROTOC_TARGET}>"
         "-DKAVIO_JSONCPP_LIBRARY=$<TARGET_FILE:jsoncpp_static>"
         "-DKAVIO_JSONCPP_INCLUDE_DIR=${KAVIO_JSONCPP_DIR}/include"
         "-DKAVIO_INCLUDE_DIR=${KAVIO_SDK_INC_DIR}"
@@ -273,4 +274,8 @@ add_custom_target(kavio_device_sdk_package
     COMMENT "Generating KavioDeviceSdkConfig.cmake for Native Apps"
     VERBATIM
 )
+add_dependencies(kavio_device_sdk_package
+    kavio_sdk
+    kavio_sdk_proto_py
+    ${KAVIO_PROTOC_TARGET})
 
