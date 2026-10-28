@@ -19,7 +19,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup><KavioSdkHostIncludeDir>$(ProjectDir)..\..\..\kavio_sdk\host\include</KavioSdkHostIncludeDir><KavioCommonDir>$(ProjectDir)..\common</KavioCommonDir><KavioOutputDir>$(ProjectDir)..\output\host</KavioOutputDir></PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><WarningLevel>Level3</WarningLevel><PreprocessorDefinitions>_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions><SDLCheck>true</SDLCheck><AdditionalIncludeDirectories>$(KavioSdkHostIncludeDir);$(KavioCommonDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile>
+    <ClCompile><WarningLevel>Level3</WarningLevel><PreprocessorDefinitions>_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions><SDLCheck>true</SDLCheck><AdditionalIncludeDirectories>$(KavioSdkHostIncludeDir);$(ProjectDir)..\..\..\kavio_sdk\common\logging;$(KavioCommonDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile>
     <Link><SubSystem>Windows</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation></Link>
     <PostBuildEvent><Command>@echo off
 if not exist "$(KavioOutputDir)" mkdir "$(KavioOutputDir)"

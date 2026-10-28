@@ -19,6 +19,7 @@
 
 #define KAVIO_HOST_IMPLEMENTATION
 #include <kavio/KavioHost.h>
+#include <KLogger.h>
 #include "VirtualHdmiProtocol.h"
 #include "VirtualDisplayCapture.h"
 #include "VirtualDisplayControl.h"
@@ -222,12 +223,6 @@ struct HostComponent {
     std::thread driver_operation_thread;
     std::wstring driver_operation_status = L"No driver operation has been requested.";
 };
-
-void Log(HostComponent* component, std::uint32_t level, const std::string& text) {
-    if (component && component->host && component->host->log) {
-        component->host->log(component->host->context, level, text.c_str());
-    }
-}
 
 bool SendDatagram(HostComponent* component, const void* data, std::size_t size) {
     if (!component || !data || size == 0 || size > kMaxDatagramBytes ||
@@ -462,8 +457,7 @@ void CaptureLoop(HostComponent* component) {
                 next_capture_retry = now + kCaptureRetryMs;
                 if (!detail.empty() && detail != last_capture_error) {
                     std::string text(detail.begin(), detail.end());
-                    Log(component, KavioHostLogLevel_Warning,
-                        "VirtualDrivers VDD capture is not ready: " + text);
+                    KLOGW("VirtualDrivers VDD capture is not ready: {}", text);
                     last_capture_error = detail;
                 }
                 Sleep(100);
@@ -473,8 +467,7 @@ void CaptureLoop(HostComponent* component) {
             component->source_ready.store(true);
             last_capture_error.clear();
             std::string display_name(capture.DisplayName().begin(), capture.DisplayName().end());
-            Log(component, KavioHostLogLevel_Info,
-                "VirtualDrivers VDD desktop capture connected to " + display_name);
+            KLOGI("VirtualDrivers VDD desktop capture connected to {}", display_name);
         }
 
         if (!component->channel_ready.load() || !component->app_ready.load()) {
@@ -492,8 +485,7 @@ void CaptureLoop(HostComponent* component) {
                 next_capture_retry = NowMilliseconds() + kCaptureRetryMs;
                 if (!detail.empty() && detail != last_capture_error) {
                     std::string text(detail.begin(), detail.end());
-                    Log(component, KavioHostLogLevel_Warning,
-                        "VirtualDrivers VDD capture lost: " + text);
+                    KLOGW("VirtualDrivers VDD capture lost: {}", text);
                     last_capture_error = detail;
                 }
             }
@@ -558,8 +550,7 @@ void CaptureLoop(HostComponent* component) {
             std::chrono::duration_cast<std::chrono::microseconds>(send_end - send_begin).count());
         component->last_send_us.store(send_us);
         if (!sent) {
-            Log(component, KavioHostLogLevel_Warning,
-                "Virtual HDMI frame send failed; forcing a new I frame");
+            KLOGW("Virtual HDMI frame send failed; forcing a new I frame");
             ResetStreamState(component, true);
             continue;
         }
@@ -641,8 +632,7 @@ void HandleAppReady(HostComponent* component, const std::uint8_t* payload,
     if (ready.width != kFrameWidth || ready.height != kFrameHeight ||
         ready.pixel_format != kPixelFormatBgra8888 ||
         ready.tile_size != kTileSize) {
-        Log(component, KavioHostLogLevel_Error,
-            "Device App rejected: incompatible virtual HDMI geometry or pixel format");
+        KLOGE("Device App rejected: incompatible virtual HDMI geometry or pixel format");
         component->app_ready.store(false);
         return;
     }
@@ -651,8 +641,7 @@ void HandleAppReady(HostComponent* component, const std::uint8_t* payload,
     if (!was_ready) {
         ResetStreamState(component, true);
         component->capture_reset_requested.store(true);
-        Log(component, KavioHostLogLevel_Info,
-            "Device App is ready for virtual HDMI frames");
+        KLOGI("Device App is ready for virtual HDMI frames");
     }
 }
 
@@ -687,10 +676,8 @@ void HandleFrameAck(HostComponent* component, const std::uint8_t* payload,
     // P datagrams already queued in the channel will be discarded by Device while
     // it is in resync state.
     ResetStreamState(component, true);
-    std::ostringstream stream;
-    stream << "Device rejected virtual HDMI frame " << ack.frame_id
-           << " status=" << ack.status << "; forcing a new I frame";
-    Log(component, KavioHostLogLevel_Warning, stream.str());
+    KLOGW("Device rejected virtual HDMI frame {} status={}; forcing a new I frame",
+          ack.frame_id, ack.status);
 }
 
 // 设备请求重新同步时，下轮强制完整 I 帧，避免继续依赖无法恢复的 P 帧。
@@ -704,11 +691,8 @@ void HandleKeyFrameRequest(HostComponent* component,
     component->key_frame_requests.fetch_add(1);
     ResetStreamState(component, true);
 
-    std::ostringstream stream;
-    stream << "Device requested I frame: last_good=" << request.last_good_frame_id
-           << " failed=" << request.failed_frame_id
-           << " reason=" << request.reason;
-    Log(component, KavioHostLogLevel_Warning, stream.str());
+    KLOGW("Device requested I frame: last_good={} failed={} reason={}",
+          request.last_good_frame_id, request.failed_frame_id, request.reason);
 }
 
 void SetDriverOperationStatus(HostComponent* component, const std::wstring& status) {
@@ -1217,8 +1201,7 @@ KavioHostStart(KavioHostHandle handle) {
         return KavioResult_Success;
     }
     component->capture_thread = std::thread(CaptureLoop, component);
-    Log(component, KavioHostLogLevel_Info,
-        "Virtual HDMI Host Component started; waiting for VirtualDrivers VDD, DXGI capture, and the Device App");
+    KLOGI("Virtual HDMI Host Component started; waiting for VirtualDrivers VDD, DXGI capture, and the Device App");
     return KavioResult_Success;
 }
 

@@ -7,6 +7,7 @@
 
 #define KAVIO_HOST_IMPLEMENTATION
 #include <kavio/KavioHost.h>
+#include <KLogger.h>
 #include "../common/DemoMetricsProtocol.h"
 
 #include <Windows.h>
@@ -38,11 +39,6 @@ struct DemoHostComponent {
     uint64_t previous_kernel = 0;
     uint64_t previous_user = 0;
 };
-
-void Log(DemoHostComponent* component, uint32_t level, const std::string& text) {
-    if (component && component->host && component->host->log)
-        component->host->log(component->host->context, level, text.c_str());
-}
 
 // GetSystemTimes 返回累计时间，必须保存上一次采样后做差才能得到区间 CPU 使用率。
 // GetSystemTimes 给出累计 CPU 时间，使用相邻采样差值计算利用率；首次采样只建立基线。
@@ -121,7 +117,7 @@ KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostStart(KavioHostHandle hand
     DemoHostComponent* component = static_cast<DemoHostComponent*>(handle);
     if (!component) return KavioResult_InvalidArgument;
     component->running.store(true);
-    Log(component, KavioHostLogLevel_Info, "demo_communication started");
+    KLOGI("demo_communication started");
     return KavioResult_Success;
 }
 
@@ -168,9 +164,8 @@ KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostOnData(
 // Channel ready 只表示双端业务通道可用；真正的数据处理仍在 KavioHostOnData 中完成。
 KAVIO_HOST_ENTRY void KAVIO_HOST_CALL KavioHostOnDeviceState(
     KavioHostHandle handle, uint32_t ready) {
-    DemoHostComponent* component = static_cast<DemoHostComponent*>(handle);
-    Log(component, KavioHostLogLevel_Info,
-        ready ? "device channel ready" : "device channel unavailable");
+    (void)handle;
+    KLOGI("{}", ready ? "device channel ready" : "device channel unavailable");
 }
 
 }  // extern "C"

@@ -45,6 +45,7 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(KAVIO_SDK_DEVICE_DIR            ${CMAKE_CURRENT_LIST_DIR})
 set(KAVIO_3RDPARTY_DIR              ${KAVIO_SDK_DEVICE_DIR}/3rdParty)
 set(KAVIO_SDK_INC_DIR               ${KAVIO_SDK_DEVICE_DIR}/include)
+set(KAVIO_LOGGING_DIR               ${KAVIO_SDK_DEVICE_DIR}/../common/logging)
 set(KAVIO_SDK_SRC_DIR               ${KAVIO_SDK_DEVICE_DIR}/src)
 set(KAVIO_SDK_PROTO_DIR             ${KAVIO_SDK_DEVICE_DIR}/proto)
 set(KAVIO_SDK_PROTO_GEN_DIR         ${CMAKE_CURRENT_BINARY_DIR}/sdk_proto_src)
@@ -211,6 +212,7 @@ add_library(kavio_sdk STATIC ${KAVIO_SDK_SOURCES})
 target_include_directories(kavio_sdk
     PUBLIC
         "${KAVIO_SDK_INC_DIR}"
+        "${KAVIO_LOGGING_DIR}"
     PRIVATE
         "${KAVIO_SDK_SRC_DIR}"
 )
@@ -264,6 +266,7 @@ add_custom_target(kavio_device_sdk_package
         "-DKAVIO_JSONCPP_LIBRARY=$<TARGET_FILE:jsoncpp_static>"
         "-DKAVIO_JSONCPP_INCLUDE_DIR=${KAVIO_JSONCPP_DIR}/include"
         "-DKAVIO_INCLUDE_DIR=${KAVIO_SDK_INC_DIR}"
+        "-DKAVIO_LOGGING_DIR=${KAVIO_LOGGING_DIR}"
         "-DKAVIO_PROTO_INCLUDE_DIR=${KAVIO_SDK_PROTO_GEN_DIR}"
         "-DKAVIO_PROTOBUF_SOURCE_INCLUDE_DIR=${KAVIO_PROTOBUF_DIR}/src"
         -P "${KAVIO_DEVICE_SDK_CONFIG_GENERATOR}"

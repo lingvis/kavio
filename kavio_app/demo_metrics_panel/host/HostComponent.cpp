@@ -24,6 +24,7 @@
 
 #define KAVIO_HOST_IMPLEMENTATION
 #include <kavio/KavioHost.h>
+#include <KLogger.h>
 #include "DemoPythonMetricsProtocol.h"
 
 namespace {
@@ -74,11 +75,6 @@ struct PanelState {
     int drag_offset_x = 0;
     int drag_offset_y = 0;
 };
-
-void Log(HostComponent* component, uint32_t level, const char* text) {
-    if (component && component->host && component->host->log)
-        component->host->log(component->host->context, level, text);
-}
 
 // send 使用有界队列；短消息遇到 QueueFull 时做有限重试，避免拖动瞬间丢坐标。
 KavioResult SendRawResult(HostComponent* component, const void* data, size_t size,
@@ -477,8 +473,7 @@ KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostStart(
     HostComponent* component = static_cast<HostComponent*>(handle);
     if (!component) return KavioResult_InvalidArgument;
     component->running.store(true);
-    Log(component, KavioHostLogLevel_Info,
-        "demo_metrics_panel started");
+    KLOGI("demo_metrics_panel started");
     return KavioResult_Success;
 }
 

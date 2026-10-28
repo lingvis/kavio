@@ -17,6 +17,7 @@ kavio_sdk/
 │   ├── py/kavio_sdk/           # Python Device SDK
 │   ├── tools/
 │   └── 3rdParty/
+├── common/logging/             # 跨 Windows/Linux 的 header-only 日志模块
 └── host/                       # Windows Host Component SDK
     ├── README.md
     └── include/kavio/KavioHost.h
@@ -106,7 +107,20 @@ kavio_sdk/host/include
 
 详细说明见 [`host/README.md`](host/README.md)。
 
-## 3. Device SDK 公开能力
+## 3. 统一日志（C++ / Python）
+
+所有组件复用 `kavio_sdk/common/logging/KLogger.h` 的统一 C++ header-only 模块，不需要链接日志专用库。Device C++ SDK 通过 `Kavio::DeviceSdk` 自动导出日志头文件路径；Host DLL 需添加 `common/logging` 一个 include 目录。
+
+```cpp
+#include <KLogger.h>
+auto result = kavio::logging::Logger::Init("main");
+KLOGI("App started");
+KLOGE("Operation failed, code={}", code);
+```
+
+Python 使用 `from kavio_sdk import app_logger`。App 日志只写本地文件，不通过 IPC 或 USB 转发。路径由 Runtime 设置、文件名含 UTC 毫秒启动会话标识，UTC 每日切割、跨日保留同一启动会话 ID、历史日志保留 72 小时；详情见 [Kavio 日志系统设计](../docs/modules/sdk/Kavio_Logging_Design.md)。
+
+## 4. Device SDK 公开能力
 
 | 能力 | C++ API | 说明 |
 | --- | --- | --- |
@@ -123,7 +137,7 @@ kavio_sdk/host/include
 
 Host 与 Device 的业务消息应通过 USB Channel 传输。C++ Device API 支持发送 **1 字节到 1 MiB** 的单条完整数据报。
 
-## 4. Host SDK 公开能力
+## 5. Host SDK 公开能力
 
 Host Component 必须实现以下入口：
 
@@ -149,12 +163,12 @@ Kavio Runtime 通过 `KavioHostApi` 向 DLL 提供：
 - Device 在线状态查询；
 - 当前 App Channel ID；
 - Host Component 重启请求；
-- 统一日志；
+- Host DLL 的日志由 AppHost 统一落盘，SDK 自动导出进程内日志绑定入口；无日志 IPC；
 - App 私有数据目录。
 
 详细 ABI、生命周期和最小实现见 [`host/README.md`](host/README.md)。
 
-## 5. Public / Internal 边界
+## 6. Public / Internal 边界
 
 ### Device C++ 公共头文件
 
@@ -183,7 +197,7 @@ device/py/kavio_sdk/
 
 Python protobuf 文件由 `device/proto/*.proto` 生成，不应手工修改生成文件。
 
-## 6. SDK 版本
+## 7. SDK 版本
 
 Device SDK 版本唯一来源：
 
@@ -207,7 +221,7 @@ Kavio Runtime 在 Device Component 建立连接时检查 SDK 版本是否满足�
 
 Host Component 使用稳定 C ABI，通过 `struct_size` 判断结构体字段是否可用，不使用 Device SDK 版本号作为 Host ABI 条件。
 
-## 7. 第三方依赖
+## 8. 第三方依赖
 
 Device C++ SDK 使用随构建提供的 protobuf `3.21.12` 与 JsonCpp `1.9.5`：
 
@@ -220,7 +234,7 @@ kavio_sdk/device/3rdParty/jsoncpp-1.9.5/
 
 Kavio SDK 不把 OpenCV 作为公共依赖。App 如果需要 OpenCV、FFmpeg 或其他库，应在自己的 App 工程中声明和管理。
 
-## 8. 与 Demo 工程配合使用
+## 9. 与 Demo 工程配合使用
 
 推荐仓库结构：
 
@@ -243,7 +257,7 @@ Kavio SDK 不把 OpenCV 作为公共依赖。App 如果需要 OpenCV、FFmpeg �
 
 第一次开发建议从 `kavio_app/README.md` 开始，再根据目标选择对应 Demo 和 SDK 文档。
 
-## 9. Kavio App Package
+## 10. Kavio App Package
 
 Kavio App 安装包统一使用：
 

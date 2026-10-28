@@ -31,7 +31,7 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;WINVER=0x0602;_WIN32_WINNT=0x0602;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(KavioSdkHostIncludeDir);$(KavioCommonDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(KavioSdkHostIncludeDir);$(ProjectDir)..\..\..\kavio_sdk\common\logging;$(KavioCommonDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link><SubSystem>Windows</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation><AdditionalDependencies>user32.lib;shell32.lib;gdi32.lib;setupapi.lib;newdev.lib;advapi32.lib;crypt32.lib;d3d11.lib;dxgi.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
     <PostBuildEvent><Command>@echo off

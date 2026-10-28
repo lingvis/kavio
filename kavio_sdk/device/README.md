@@ -103,6 +103,30 @@ kavio_sdk/device/build/lib/
 kavio_sdk/device/build/KavioDeviceSdkConfig.cmake
 ```
 
+## 3.4 统一日志
+
+Device C++ App 无需添加日志专用 `.a`：通过 `Kavio::DeviceSdk` 自动取得公共头文件和 spdlog 头文件搜索路径。
+
+```cpp
+#include <KLogger.h>
+using namespace kavio::logging;
+
+auto result = Logger::Init("main", Level::Info);
+if (result.ok()) {
+    KLOGI("Device App started");
+}
+```
+
+Runtime 通过 `KAVIO_APP_LOG_DIR` 指定 App 专属目录，App 不接收路径参数。日志按 UTC 自然日切割，使用统一时间戳命名；跨日文件保留同一启动会话 ID，历史保留 72 小时，不通过 IPC 转发。Python 示例：
+
+```python
+from kavio_sdk import app_logger
+logger = app_logger.init("main", "INFO")
+logger.info("Device App started")
+```
+
+完整设计、文件路径、命名和轮转规则参见 [统一日志设计](../../docs/modules/sdk/Kavio_Logging_Design.md)。
+
 ## 4. C++ 生命周期
 
 典型调用顺序：

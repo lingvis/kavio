@@ -26,6 +26,7 @@
 
 #define KAVIO_HOST_IMPLEMENTATION
 #include <kavio/KavioHost.h>
+#include <KLogger.h>
 #include "DemoImagePanelProtocol.h"
 
 namespace {
@@ -39,7 +40,7 @@ struct DecodedFrame {
     std::vector<uint8_t> pixels;
 };
 
-// Host ¸ºÔğ PNG/GIF ½âÂë£¬Í³Ò»Êä³ö¿ÉÓÉ Device Ö±½ÓÏû·ÑµÄ BGRA8888 Ö¡¡£
+// Host è´Ÿè´£ PNG/GIF è§£ç ï¼Œç»Ÿä¸€è¾“å‡ºå¯ç”± Device ç›´æ¥æ¶ˆè´¹çš„ BGRA8888 å¸§ã€‚
 struct DecodedImage {
     uint32_t width = 0;
     uint32_t height = 0;
@@ -88,7 +89,7 @@ struct PanelState {
     size_t cached_frame_index = static_cast<size_t>(-1);
 };
 
-// GIF Ö¡ĞèÒª¼ÇÂ¼ disposal¡¢Î»ÖÃºÍÑÓ³Ù£¬²»ÄÜ°Ñ¾Ö²¿¸üĞÂÖ¡µ±³ÉÍêÕû»­²¼¡£
+// GIF å¸§éœ€è¦è®°å½• disposalã€ä½ç½®å’Œå»¶è¿Ÿï¼Œä¸èƒ½æŠŠå±€éƒ¨æ›´æ–°å¸§å½“æˆå®Œæ•´ç”»å¸ƒã€‚
 struct GifFrameInfo {
     uint32_t left = 0;
     uint32_t top = 0;
@@ -99,10 +100,6 @@ struct GifFrameInfo {
     uint32_t delay_ms = 100;
     uint32_t disposal = 0;
 };
-
-void Log(HostComponent* component, uint32_t level, const char* text) {
-    if (component && component->host && component->host->log) component->host->log(component->host->context, level, text);
-}
 
 // Explorer normally runs at medium integrity. If KavioWin is started elevated
 // (for example from an elevated Visual Studio), UIPI can block WM_DROPFILES and
@@ -189,7 +186,7 @@ uint32_t ReadFrameDelay(IWICMetadataQueryReader* reader) {
     return std::max<uint32_t>(20, delay_10ms * 10u);
 }
 
-// WIC ×ª»»Îª BGRA8888£¬Í³Ò» Alpha/stride£¬±ÜÃâ Device ¶ËĞ¯´ø¶àÖÖÍ¼Æ¬½âÂëÆ÷¡£
+// WIC è½¬æ¢ä¸º BGRA8888ï¼Œç»Ÿä¸€ Alpha/strideï¼Œé¿å… Device ç«¯æºå¸¦å¤šç§å›¾ç‰‡è§£ç å™¨ã€‚
 bool DecodeFrameBgra(IWICImagingFactory* factory,
                      IWICBitmapFrameDecode* frame,
                      uint32_t width,
@@ -249,7 +246,7 @@ void ClearCanvasRect(std::vector<uint8_t>& canvas,
     }
 }
 
-// GIF µ±Ç°Ö¡Ö»¸²¸ÇËüµÄ×ÓÇøÓò£¬ºÏ³É±ØĞëÔÚ¶ÀÁ¢»­²¼ÉÏ´¦ÀíÍ¸Ã÷ÏñËØ¡£
+// GIF å½“å‰å¸§åªè¦†ç›–å®ƒçš„å­åŒºåŸŸï¼Œåˆæˆå¿…é¡»åœ¨ç‹¬ç«‹ç”»å¸ƒä¸Šå¤„ç†é€æ˜åƒç´ ã€‚
 void CompositeGifFrame(std::vector<uint8_t>& canvas,
                        uint32_t canvas_width,
                        uint32_t canvas_height,
@@ -279,7 +276,7 @@ void CompositeGifFrame(std::vector<uint8_t>& canvas,
     }
 }
 
-// ´Ó GIF Ö¡ metadata ÌáÈ¡ÑÓ³ÙºÍ disposal£»µ¥Î»×ª»»ĞèÓë Device µÄ delay_ms Æ¥Åä¡£
+// ä» GIF å¸§ metadata æå–å»¶è¿Ÿå’Œ disposalï¼›å•ä½è½¬æ¢éœ€ä¸ Device çš„ delay_ms åŒ¹é…ã€‚
 bool ReadGifFrameInfo(IWICBitmapFrameDecode* frame,
                       GifFrameInfo& info,
                       std::string& error) {
@@ -315,7 +312,7 @@ bool ReadGifFrameInfo(IWICBitmapFrameDecode* frame,
     return true;
 }
 
-// °´ GIF disposal ¹æÔòºÏ³ÉÈ«³ß´çÖ¡£»Ã¿Ò»Ö¡×îÖÕ¶¼¿É¶ÀÁ¢Ğ´Èë TX Surface¡£
+// æŒ‰ GIF disposal è§„åˆ™åˆæˆå…¨å°ºå¯¸å¸§ï¼›æ¯ä¸€å¸§æœ€ç»ˆéƒ½å¯ç‹¬ç«‹å†™å…¥ TX Surfaceã€‚
 bool DecodeGif(IWICImagingFactory* factory,
                IWICBitmapDecoder* decoder,
                UINT frame_count,
@@ -505,7 +502,7 @@ bool DecodeStillImage(IWICImagingFactory* factory,
     return true;
 }
 
-// µ÷ÓÃÕßÖ»µÃµ½Í³Ò»µÄÍêÕû BGRA Ö¡¼¯ºÏ£¬ÎÄ¼şÀ©Õ¹ÃûÓëÍ¼Ïñ½âÂëÏ¸½ÚÁôÔÚ Host¡£
+// è°ƒç”¨è€…åªå¾—åˆ°ç»Ÿä¸€çš„å®Œæ•´ BGRA å¸§é›†åˆï¼Œæ–‡ä»¶æ‰©å±•åä¸å›¾åƒè§£ç ç»†èŠ‚ç•™åœ¨ Hostã€‚
 bool DecodeImage(const wchar_t* path, DecodedImage& output, std::string& error) {
     IWICImagingFactory* factory = nullptr;
     IWICBitmapDecoder* decoder = nullptr;
@@ -557,7 +554,7 @@ bool DecodeImage(const wchar_t* path, DecodedImage& output, std::string& error) 
     return ok;
 }
 
-// ImageBegin/FrameBegin/FrameChunk/ImageEnd ÊÇÒ»´ÎÍêÕû´«Êä£»Êı¾İ°´ kChunkBytes ·Ö°ü£¬¼æ¹Ë IPC Êı¾İ±¨ÉÏÏŞ¡£
+// ImageBegin/FrameBegin/FrameChunk/ImageEnd æ˜¯ä¸€æ¬¡å®Œæ•´ä¼ è¾“ï¼›æ•°æ®æŒ‰ kChunkBytes åˆ†åŒ…ï¼Œå…¼é¡¾ IPC æ•°æ®æŠ¥ä¸Šé™ã€‚
 bool UploadImage(PanelState* state) {
     HostComponent* component = state->component;
     if (!component->channel_ready.load() || !component->device_ready.load()) {
@@ -607,7 +604,7 @@ bool UploadImage(PanelState* state) {
     return SendMessage(component, position);
 }
 
-// Ö»·¢ËÍÍÏ¶¯×ø±ê£¬²»ÖØ¸´ÉÏ´«ÏñËØ£»Device Í¨¹ı dest_pos ĞŞ¸ÄÍ¼²ãÎ»ÖÃ¡£
+// åªå‘é€æ‹–åŠ¨åæ ‡ï¼Œä¸é‡å¤ä¸Šä¼ åƒç´ ï¼›Device é€šè¿‡ dest_pos ä¿®æ”¹å›¾å±‚ä½ç½®ã€‚
 void SendPosition(PanelState* state) {
     demo_image_panel::PositionMessage message{};
     demo_image_panel::Initialize(message, demo_image_panel::MessageType::Position);
@@ -644,7 +641,7 @@ void DestroyBackBuffer(PanelState* state) {
     state->back_height = 0;
 }
 
-// Ö»ÔÚ´°¿Ú³ß´ç±ä»¯Ê±ÖØ½¨Ë«»º³å£¬±ÜÃâÃ¿´Î WM_PAINT ÖØ¸´·ÖÅä GDI Î»Í¼¡£
+// åªåœ¨çª—å£å°ºå¯¸å˜åŒ–æ—¶é‡å»ºåŒç¼“å†²ï¼Œé¿å…æ¯æ¬¡ WM_PAINT é‡å¤åˆ†é… GDI ä½å›¾ã€‚
 bool EnsureBackBuffer(HDC reference_dc, PanelState* state, int width, int height) {
     if (!state || width <= 0 || height <= 0) return false;
     if (state->back_dc && state->back_bitmap &&
@@ -683,7 +680,7 @@ void InvalidateImageBitmap(PanelState* state) {
     if (state) state->cached_frame_index = static_cast<size_t>(-1);
 }
 
-// ½«µ±Ç° BGRA Ö¡×ª»»Îª¿É»æÖÆÎ»Í¼£¬²¢°´Ö¡´úÊı¸´ÓÃ£¬±ÜÃâÎŞ±ä»¯Ê±·´¸´ÉÏ´«¡£
+// å°†å½“å‰ BGRA å¸§è½¬æ¢ä¸ºå¯ç»˜åˆ¶ä½å›¾ï¼Œå¹¶æŒ‰å¸§ä»£æ•°å¤ç”¨ï¼Œé¿å…æ— å˜åŒ–æ—¶åå¤ä¸Šä¼ ã€‚
 bool EnsureImageBitmap(HDC reference_dc, PanelState* state) {
     if (!state || state->image.frames.empty()) return false;
     const uint32_t width = state->image.width;
@@ -741,7 +738,7 @@ void DrawImage(HDC dc, PanelState* state) {
                static_cast<int>(state->image.width), static_cast<int>(state->image.height), blend);
 }
 
-// ÏÈ»æÖÆ±³¾°Óëµ±Ç°Í¼Ïñ£¬ÔÙµş¼ÓÍÏ×§±ß¿ò£»ĞèÒªË«»º³å±ÜÃâÍÏ¶¯ÉÁË¸¡£
+// å…ˆç»˜åˆ¶èƒŒæ™¯ä¸å½“å‰å›¾åƒï¼Œå†å åŠ æ‹–æ‹½è¾¹æ¡†ï¼›éœ€è¦åŒç¼“å†²é¿å…æ‹–åŠ¨é—ªçƒã€‚
 void PaintPanel(HWND window, HDC dc, PanelState* state) {
     RECT client{};
     GetClientRect(window, &client);
@@ -783,8 +780,7 @@ LRESULT CALLBACK PanelWindowProc(HWND window, UINT message, WPARAM wparam, LPARA
 
     switch (message) {
     case WM_DROPFILES: {
-        Log(state->component, KavioHostLogLevel_Info,
-            "App Panel received a file drop");
+        KLOGI("App Panel received a file drop");
         HDROP drop = reinterpret_cast<HDROP>(wparam);
         wchar_t path[MAX_PATH] = {};
         if (DragQueryFileW(drop, 0, path, MAX_PATH)) {
@@ -799,19 +795,17 @@ LRESULT CALLBACK PanelWindowProc(HWND window, UINT message, WPARAM wparam, LPARA
                 state->next_frame_tick = GetTickCount64() +
                     std::max<uint32_t>(20, state->image.frames[0].delay_ms);
                 if (UploadImage(state)) {
-                    Log(state->component, KavioHostLogLevel_Info,
-                        "App Panel image decoded and uploaded successfully");
+                    KLOGI("App Panel image decoded and uploaded successfully");
                     UpdateTitle(window, state);
                 }
                 else {
-                    Log(state->component, KavioHostLogLevel_Error,
-                        "App Panel image upload failed");
+                    KLOGE("App Panel image upload failed");
                     UpdateTitle(window, state, L"upload failed");
                 }
                 InvalidateRect(window, nullptr, FALSE);
             }
             else {
-                Log(state->component, KavioHostLogLevel_Error, error.c_str());
+                KLOGE("{}", error);
                 MessageBoxA(window, error.c_str(), "Kavio App Panel", MB_ICONERROR);
             }
         }
@@ -892,7 +886,7 @@ LRESULT CALLBACK PanelWindowProc(HWND window, UINT message, WPARAM wparam, LPARA
     }
 }
 
-// App Panel Ê¹ÓÃ¶ÀÁ¢ UI Ïß³Ì£»´°¿ÚÏûÏ¢Ñ­»·Óë Host Í¨µÀ»Øµ÷·ÖÀë¡£
+// App Panel ä½¿ç”¨ç‹¬ç«‹ UI çº¿ç¨‹ï¼›çª—å£æ¶ˆæ¯å¾ªç¯ä¸ Host é€šé“å›è°ƒåˆ†ç¦»ã€‚
 void PanelThreadMain(HostComponent* component) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     PanelState state;
@@ -918,13 +912,11 @@ void PanelThreadMain(HostComponent* component) {
     if (window) {
         const bool filter_enabled = EnableShellFileDrop(window);
         if (!filter_enabled) {
-            Log(component, KavioHostLogLevel_Warning,
-                "App Panel could not relax UIPI file-drop message filtering; "
-                "drag/drop may fail when KavioAppHost is elevated");
+            KLOGW("App Panel could not relax UIPI file-drop message filtering; "
+                   "drag/drop may fail when KavioAppHost is elevated");
         }
         else {
-            Log(component, KavioHostLogLevel_Info,
-                "App Panel file-drop handling is ready");
+            KLOGI("App Panel file-drop handling is ready");
         }
         SetTimer(window, 1, 16, nullptr);
     }

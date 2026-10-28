@@ -32,7 +32,7 @@
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(KavioSdkHostIncludeDir);$(KavioCommonDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(KavioSdkHostIncludeDir);$(ProjectDir)..\..\..\kavio_sdk\common\logging;$(KavioCommonDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link><SubSystem>Windows</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation><AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies></Link>
     <PostBuildEvent><Command>@echo off

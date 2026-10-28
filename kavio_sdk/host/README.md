@@ -4,7 +4,7 @@ Kavio Host SDK 用于开发运行在 Windows 上的 Kavio Host Component。
 
 Host Component 是一个 **Windows x64 DLL**。它适合实现必须运行在 Windows 侧的功能，例如系统信息采集、文件访问、图片解码、自定义 App Panel，以及通过 USB Channel 与 Kavio Device 上的 Device Component 交换业务数据。
 
-Host SDK 是 header-only C ABI，不需要单独构建或链接 SDK 库。
+Host SDK 是 header-only C ABI，不需要单独构建或链接 SDK 库。统一日志也是 header-only，需额外引入公共日志头文件目录。
 
 ## 1. 引入 SDK
 
@@ -100,7 +100,6 @@ KavioHostOpenPanel
 | `is_device_online` | 查询 Device Component 是否可双向通信 |
 | `get_channel_id` | 获取当前 App 的稳定 Channel ID |
 | `restart` | 请求重新启动当前 Host Component |
-| `log` | 写入 Kavio Windows Runtime 统一日志 |
 | `get_data_path` | 获取当前 App Host 私有可写数据目录 |
 
 `KavioHostApi` 指针从 `KavioHostCreate` 开始有效，到 `KavioHostDestroy` 返回为止。
@@ -194,25 +193,28 @@ App 的持久化缓存、Host 侧配置和业务数据应保存在该目录，�
 
 ## 9. 日志
 
-使用：
-
-```cpp
-host_api->log(...)
-```
-
-写入统一日志。
-
-支持级别：
+Host DLL 通过统一 header-only Logger **直接写入独立本地日志文件**，不经过 AppHost 日志回调或 IPC。与 AppHost 共用 App 专属目录，但分别保存 `HostComponent_*.log` 与 `KavioAppHost_*.log`。除 `kavio_sdk/host/include` 外，额外加入：
 
 ```text
-Trace
-Debug
-Info
-Warning
-Error
+kavio_sdk/common/logging
 ```
 
-Host Component 应优先使用宿主日志接口，避免每个 App 自己建立独立日志系统。
+使用示例：
+
+```cpp
+#define KAVIO_HOST_IMPLEMENTATION
+#include <kavio/KavioHost.h>  // SDK 自动导出 DLL 日志生命周期入口
+
+void OnStarted() {
+    KLOGI("Host Component started, frame={}", 42);
+}
+```
+
+AppHost 加载 DLL 后自动调用 `KavioHostInitLogging()`，DLL 内部打开自己的文件；卸载前自动调用 `KavioHostShutdownLogging()`。开发者无需显式调用 `Logger::Init()`，也不需要处理日志回调。按 **UTC 自然日** 切割为 `HostComponent_YYYYMMDD_HHMMSS_mmm_pid.log`，历史保留 72 小时，不按大小轮转。
+
+`KavioHostApi::log` 已删除；请使用 `KLOGT/KLOGD/KLOGI/KLOGW/KLOGE/KLOGC`。旧 Host DLL 需要重新编译。
+
+请阅读 [统一日志模块完整设计](../../docs/modules/sdk/Kavio_Logging_Design.md)。
 
 ## 10. ABI 约束
 
