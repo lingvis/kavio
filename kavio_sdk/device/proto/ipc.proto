@@ -109,6 +109,18 @@ enum MessageTypePb {
   MSG_P2A_REQ_SET_APP_CONFIG = 77;
   // A2P 返回保存结果和当前配置。
   MSG_A2P_RSP_SET_APP_CONFIG = 78;
+  // A2P 请求创建独立的全屏 AppView 共享画布；不属于 TX Overlay Surface。
+  MSG_A2P_REQ_CREATE_APP_VIEW_SURFACE = 80;
+  // P2A 返回 AppView 共享画布信息。
+  MSG_P2A_RSP_CREATE_APP_VIEW_SURFACE = 81;
+  // A2P 请求销毁独立的全屏 AppView 共享画布。
+  MSG_A2P_REQ_DESTROY_APP_VIEW_SURFACE = 82;
+  // A2P 通知 AppView 共享画布有新帧；不要求应答。
+  MSG_A2P_NTF_APP_VIEW_FRAME_READY = 83;
+  // P2A AppView foreground pointer event. Only the foreground managed App receives it.
+  MSG_P2A_NTF_APP_VIEW_POINTER = 84;
+  // P2A AppView visibility event (not equivalent to process start/stop).
+  MSG_P2A_NTF_APP_VIEW_VISIBILITY = 85;
   // P2A 通用状态回复，适用于无专用 RSP 的请求。
   MSG_P2A_RSP_STATUS = 90;
   // P2A 请求错误回复，failed_for 指明失败请求。
@@ -405,6 +417,40 @@ message A2PRspSetAppConfigPb {
   bytes config_json = 3;
 }
 
+// Full-screen AppView surface is independent from TX overlay surfaces.
+message AppViewSurfaceInfoPb {
+  uint32 surface_id = 1;
+  string name = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  uint32 stride = 5;
+  uint64 size = 6;
+  PixelFormatPb pixel_format = 7;
+}
+message A2PReqCreateAppViewSurfacePb {}
+message P2ARspCreateAppViewSurfacePb {
+  AppViewSurfaceInfoPb surface = 1;
+}
+message A2PReqDestroyAppViewSurfacePb {
+  uint32 surface_id = 1;
+}
+message A2PNtfAppViewFrameReadyPb {
+  uint32 surface_id = 1;
+  uint64 frame_seq = 2;
+}
+message P2ANtfAppViewPointerPb {
+  uint32 surface_id = 1;
+  uint64 sequence = 2;
+  int32 x = 3;
+  int32 y = 4;
+  bool pressed = 5;
+  bool cancelled = 6;
+}
+message P2ANtfAppViewVisibilityPb {
+  uint32 surface_id = 1;
+  bool visible = 2;
+}
+
 message IPCPayloadPb {
   // Payload field number always equals MessageTypePb numeric value.
   oneof body {
@@ -441,6 +487,12 @@ message IPCPayloadPb {
     A2PRspGetAppConfigPb a2p_rsp_get_app_config = 76;  // MSG_A2P_RSP_GET_APP_CONFIG
     P2AReqSetAppConfigPb p2a_req_set_app_config = 77;  // MSG_P2A_REQ_SET_APP_CONFIG
     A2PRspSetAppConfigPb a2p_rsp_set_app_config = 78;  // MSG_A2P_RSP_SET_APP_CONFIG
+    A2PReqCreateAppViewSurfacePb a2p_req_create_app_view_surface = 80;  // MSG_A2P_REQ_CREATE_APP_VIEW_SURFACE
+    P2ARspCreateAppViewSurfacePb p2a_rsp_create_app_view_surface = 81;  // MSG_P2A_RSP_CREATE_APP_VIEW_SURFACE
+    A2PReqDestroyAppViewSurfacePb a2p_req_destroy_app_view_surface = 82;  // MSG_A2P_REQ_DESTROY_APP_VIEW_SURFACE
+    A2PNtfAppViewFrameReadyPb a2p_ntf_app_view_frame_ready = 83;  // MSG_A2P_NTF_APP_VIEW_FRAME_READY
+    P2ANtfAppViewPointerPb p2a_ntf_app_view_pointer = 84;  // MSG_P2A_NTF_APP_VIEW_POINTER
+    P2ANtfAppViewVisibilityPb p2a_ntf_app_view_visibility = 85;  // MSG_P2A_NTF_APP_VIEW_VISIBILITY
     P2ARspStatusPb p2a_rsp_status = 90;  // MSG_P2A_RSP_STATUS
     P2ARspErrorPb p2a_rsp_error = 91;  // MSG_P2A_RSP_ERROR
   }

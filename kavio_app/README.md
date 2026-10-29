@@ -29,7 +29,8 @@ Device Component 是 App 在 Kavio 设备侧运行的主体，当前支持两种
 Device Component 可以按业务需要使用：
 
 - RX：读取输入视频帧；
-- TX：创建并更新输出 Surface；
+- TX：创建并更新输出 Surface，用于既有 TX/Overlay 图像通道；
+- **AppView：** 通过独立 BGRA8888 共享画布向设备副屏提交全屏 UI，不使用 TX Overlay Surface；需要 LVGL 时链接可选的 `Kavio::DeviceSdkLvglAppView` 适配库；
 - Input：发送键盘、鼠标等输入事件；
 - USB Channel：与 Windows Host Component 双向交换 App 自定义数据；
 - App Configuration：通过 SDK 查询、修改完整 JSON 配置。
@@ -239,5 +240,6 @@ Schema 格式与数据持久化规则见 [`Kavio_App_Configuration_Spec.md`](../
 | `demo_panel_image` | Native | DLL | App Panel、PNG/GIF 解码、大块数据分块传输、TX 位置同步 |
 | `demo_metrics_panel` | Python | DLL | Python Device Component、USB Channel、Windows 指标和 App Panel |
 | `demo_virtual_hdmi` | Native | DLL | Virtual Display、DXGI 捕获、I/P tile 流式传输、App Panel |
+| `app_view_demo` | Native | 无 | 全屏 AppView、BGRA8888 共享画布、LVGL 9.4 副屏渲染 |
 
-第一次接入建议先阅读 `demo_rx_tx`；需要 Host/Device 双端通信时参考 `demo_communication`；需要自定义 Windows UI 时参考 `demo_panel_image` 或 `demo_metrics_panel`；需要连续图像采集和低延迟 Host/Device 推流时参考 `demo_virtual_hdmi`。
+第一次接入建议先阅读 `demo_rx_tx`；需要全屏副屏 UI 时参考 `app_view_demo`；需要 Host/Device 双端通信时参考 `demo_communication`；需要自定义 Windows UI 时参考 `demo_panel_image` 或 `demo_metrics_panel`；需要连续图像采集和低延迟 Host/Device 推流时参考 `demo_virtual_hdmi`。

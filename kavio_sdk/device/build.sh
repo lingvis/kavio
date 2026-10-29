@@ -69,7 +69,10 @@ main() {
 
     echo "Configuring ${SDK_TARGET} (${build_type})"
     cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
-        -DCMAKE_BUILD_TYPE="${build_type}"
+        -DCMAKE_BUILD_TYPE="${build_type}" \
+        -DCONFIG_LV_BUILD_EXAMPLES=OFF \
+        -DCONFIG_LV_BUILD_DEMOS=OFF \
+        -DLV_BUILD_TESTS=OFF
 
     # The package target builds the C++ library and Python protobuf artifacts
     # independently; CMake only regenerates bindings when their inputs change.

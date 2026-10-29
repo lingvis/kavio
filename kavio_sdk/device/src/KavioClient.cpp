@@ -11,9 +11,15 @@
 #include "internal/EncodedStreamShm.h"
 #include "internal/IPCSocket.h"
 #include "internal/AppConfigManager.h"
+#include <kavio/detail/AppViewSurfaceShared.h>
+#include <kavio/detail/AppViewDirtyRegion.h>
 #include <kavio/KavioSdkVersion.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -52,6 +58,47 @@ void SdkLog(const char* level, Args&&... args)
 
 static const size_t kCommChannelMaxPayloadSize = 1024 * 1024;
 static const size_t kAppConfigMaxPayloadSize = 1024 * 1024;
+
+void MarkAppViewFullDirty(detail::AppViewSharedHeader* header)
+{
+    if (!header) return;
+    header->full_dirty = 1;
+    header->dirty_rect_count = 0;
+}
+
+bool ClipAppViewRect(const AppViewRect& input,
+                     uint32_t canvas_width,
+                     uint32_t canvas_height,
+                     AppViewRect& output)
+{
+    if (input.width <= 0 || input.height <= 0 || canvas_width == 0 || canvas_height == 0) {
+        return false;
+    }
+    const int64_t left = std::max<int64_t>(0, input.x);
+    const int64_t top = std::max<int64_t>(0, input.y);
+    const int64_t right = std::min<int64_t>(canvas_width,
+        static_cast<int64_t>(input.x) + input.width);
+    const int64_t bottom = std::min<int64_t>(canvas_height,
+        static_cast<int64_t>(input.y) + input.height);
+    if (left >= right || top >= bottom) return false;
+    output.x = static_cast<int32_t>(left);
+    output.y = static_cast<int32_t>(top);
+    output.width = static_cast<int32_t>(right - left);
+    output.height = static_cast<int32_t>(bottom - top);
+    return true;
+}
+
+void AppendAppViewDirtyRect(detail::AppViewSharedHeader* header, const AppViewRect& input)
+{
+    if (!header || header->full_dirty) return;
+    AppViewRect clipped{};
+    if (!ClipAppViewRect(input, header->width, header->height, clipped)) return;
+    if (!detail::AppendAppViewRegion(header->dirty_rects, header->dirty_rect_count,
+                                      detail::kAppViewMaxDirtyRects, clipped,
+                                      static_cast<uint64_t>(header->width) * header->height)) {
+        MarkAppViewFullDirty(header);
+    }
+}
 
 std::string ResolveClientName(const kavio::ipc::proto::A2PReqCreateSessionPb& options) {
     char program_path[PATH_MAX + 1] = {};
@@ -136,6 +183,44 @@ struct TxSurface::Impl {
     kavio::ipc::proto::ShmInfoPb info;
     std::shared_ptr<FrameShm> shm;
     std::weak_ptr<SurfaceOwner> owner;
+};
+
+struct AppViewSurface::Impl {
+    uint32_t surface_id = 0;
+    int fd = -1;
+    void* mapping = MAP_FAILED;
+    size_t mapping_size = 0;
+    detail::AppViewSharedHeader* header = nullptr;
+    uint8_t* pixels = nullptr;
+    bool write_locked = false;
+    std::function<Status(uint32_t, uint64_t)> notify_frame_ready;
+    // UI-thread-only diagnostic counters. No new fields in shared-memory ABI.
+    uint64_t dirty_diag_frames = 0;
+    uint64_t dirty_diag_input_rects = 0;
+    uint64_t dirty_diag_input_pixels = 0;
+    uint64_t dirty_diag_pending_rects = 0;
+    uint64_t dirty_diag_pending_pixels = 0;
+    uint64_t dirty_diag_full_pending = 0;
+
+    void CloseMapping() noexcept {
+        if (write_locked && header) {
+            (void)::pthread_mutex_unlock(&header->mutex);
+            write_locked = false;
+        }
+        header = nullptr;
+        pixels = nullptr;
+        if (mapping != MAP_FAILED) {
+            (void)::munmap(mapping, mapping_size);
+            mapping = MAP_FAILED;
+        }
+        mapping_size = 0;
+        if (fd >= 0) {
+            (void)::close(fd);
+            fd = -1;
+        }
+        surface_id = 0;
+        notify_frame_ready = {};
+    }
 };
 
 struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl>,
@@ -1061,6 +1146,137 @@ Status TxSurface::Destroy(uint64_t& request_id) {
     return owner->DestroyTxSurface(impl_->info.id(), impl_->shm, request_id);
 }
 
+AppViewSurface::AppViewSurface() : impl_(std::make_unique<Impl>()) {}
+AppViewSurface::~AppViewSurface() { Close(); }
+AppViewSurface::AppViewSurface(AppViewSurface&& other) noexcept = default;
+AppViewSurface& AppViewSurface::operator=(AppViewSurface&& other) noexcept = default;
+
+bool AppViewSurface::IsValid() const noexcept {
+    return impl_ && impl_->fd >= 0 && impl_->mapping != MAP_FAILED &&
+           impl_->header && impl_->pixels &&
+           impl_->header->magic == detail::kAppViewShmMagic &&
+           impl_->surface_id != 0;
+}
+
+uint32_t AppViewSurface::id() const noexcept { return impl_ ? impl_->surface_id : 0; }
+uint32_t AppViewSurface::width() const noexcept { return IsValid() ? impl_->header->width : 0; }
+uint32_t AppViewSurface::height() const noexcept { return IsValid() ? impl_->header->height : 0; }
+uint32_t AppViewSurface::stride() const noexcept { return IsValid() ? impl_->header->stride : 0; }
+
+Status AppViewSurface::BeginWrite() {
+    if (!IsValid()) {
+        return Status::Error(StatusCode::Common_InvalidState, "AppView surface is not valid");
+    }
+    if (impl_->write_locked) {
+        return Status::Error(StatusCode::Common_InvalidState, "AppView write is already in progress");
+    }
+    int rc = ::pthread_mutex_lock(&impl_->header->mutex);
+#ifdef EOWNERDEAD
+    if (rc == EOWNERDEAD) {
+        const int consistent_rc = ::pthread_mutex_consistent(&impl_->header->mutex);
+        if (consistent_rc != 0) {
+            (void)::pthread_mutex_unlock(&impl_->header->mutex);
+            return Status::Error(StatusCode::SHM_OperationFailed,
+                                 "recover AppView shared mutex failed: " +
+                                 std::string(std::strerror(consistent_rc)));
+        }
+        rc = 0;
+    }
+#endif
+    if (rc != 0) {
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             "lock AppView shared canvas failed: " +
+                             std::string(std::strerror(rc)));
+    }
+    impl_->write_locked = true;
+    return Status::Ok();
+}
+
+uint8_t* AppViewSurface::GetBuffer() noexcept {
+    return IsValid() && impl_->write_locked ? impl_->pixels : nullptr;
+}
+
+Status AppViewSurface::Present() {
+    return Present(nullptr, 0);
+}
+
+Status AppViewSurface::Present(const AppViewRect* dirty_rects, size_t dirty_rect_count) {
+    if (!IsValid() || !impl_->write_locked) {
+        return Status::Error(StatusCode::Common_InvalidState,
+                             "AppView Present requires an active BeginWrite");
+    }
+
+    auto* header = impl_->header;
+    if (header->dirty_rect_count > detail::kAppViewMaxDirtyRects || header->full_dirty > 1) {
+        MarkAppViewFullDirty(header);
+    }
+    if (dirty_rects == nullptr || dirty_rect_count == 0) {
+        MarkAppViewFullDirty(header);
+    } else {
+        for (size_t i = 0; i < dirty_rect_count && !header->full_dirty; ++i) {
+            AppendAppViewDirtyRect(header, dirty_rects[i]);
+        }
+    }
+
+    // The pending set may cover more than one Present() if the display worker
+    // has not consumed the previous update yet. Compare with LVGL and Platform
+    // diagnostics to identify where a near-full partial copy originates.
+    ++impl_->dirty_diag_frames;
+    impl_->dirty_diag_input_rects += dirty_rects ? dirty_rect_count : 0;
+    if (dirty_rects) {
+        for (size_t i = 0; i < dirty_rect_count; ++i) {
+            AppViewRect clipped{};
+            if (ClipAppViewRect(dirty_rects[i], header->width, header->height, clipped)) {
+                impl_->dirty_diag_input_pixels += detail::AppViewRectPixels(clipped);
+            }
+        }
+    }
+    impl_->dirty_diag_full_pending += header->full_dirty != 0 ? 1 : 0;
+    impl_->dirty_diag_pending_rects += header->dirty_rect_count;
+    impl_->dirty_diag_pending_pixels += header->full_dirty
+        ? static_cast<uint64_t>(header->width) * header->height
+        : detail::AppViewDirtyPixels(header->dirty_rects, header->dirty_rect_count);
+    if (header->frame_sequence != UINT64_MAX) {
+        ++header->frame_sequence;
+    } else {
+        header->frame_sequence = 1;
+    }
+    const uint64_t frame_seq = header->frame_sequence;
+    const int rc = ::pthread_mutex_unlock(&header->mutex);
+    if (rc != 0) {
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             "unlock AppView shared canvas failed: " +
+                             std::string(std::strerror(rc)));
+    }
+    impl_->write_locked = false;
+    if (impl_->dirty_diag_frames >= 200) {
+        const double max_pixels = static_cast<double>(header->width) * header->height *
+                                  impl_->dirty_diag_frames;
+        SdkLog("INFO", "[AppView][Dirty][SDK] surface=", impl_->surface_id,
+               " frames=", impl_->dirty_diag_frames,
+               " input_pct=", (100.0 * impl_->dirty_diag_input_pixels / max_pixels),
+               " pending_pct=", (100.0 * impl_->dirty_diag_pending_pixels / max_pixels),
+               " avg_pending_rects=", (static_cast<double>(impl_->dirty_diag_pending_rects) /
+                                        impl_->dirty_diag_frames),
+               " full_pending=", impl_->dirty_diag_full_pending);
+        impl_->dirty_diag_frames = 0;
+        impl_->dirty_diag_input_rects = 0;
+        impl_->dirty_diag_input_pixels = 0;
+        impl_->dirty_diag_pending_rects = 0;
+        impl_->dirty_diag_pending_pixels = 0;
+        impl_->dirty_diag_full_pending = 0;
+    }
+    if (!impl_->notify_frame_ready) {
+        return Status::Error(StatusCode::Common_NotConnected,
+                             "AppView frame notification channel is unavailable");
+    }
+    return impl_->notify_frame_ready(impl_->surface_id, frame_seq);
+}
+
+void AppViewSurface::Close() noexcept {
+    if (impl_) impl_->CloseMapping();
+}
+
 KavioClient::KavioClient() : impl_(std::make_shared<Impl>()) {}
 
 KavioClient::~KavioClient() {
@@ -1304,6 +1520,101 @@ Status KavioClient::DestroyTxSurface(uint32_t shm_id, uint64_t& request_id) {
                     impl_->pending_tx_destroy.erase(id); return st; }
     request_id = id;
     return Status::Ok();
+}
+
+Status KavioClient::CreateAppViewSurface(uint64_t& request_id) {
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    const auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_CREATE_APP_VIEW_SURFACE, id);
+    req.mutable_payload()->mutable_a2p_req_create_app_view_surface();
+    const auto st = impl_->SendPacket(req);
+    if (st.ok()) request_id = id;
+    return st;
+}
+
+Status KavioClient::OpenAppViewSurface(
+    const kavio::ipc::proto::AppViewSurfaceInfoPb& info,
+    AppViewSurface& surface) {
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    if (info.surface_id() == 0 || info.name().empty() || info.width() == 0 ||
+        info.height() == 0 || static_cast<uint64_t>(info.stride()) < static_cast<uint64_t>(info.width()) * 4U ||
+        info.pixel_format() != kavio::ipc::proto::PIXEL_FORMAT_BGRA8888 || info.size() == 0 ||
+        info.size() > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+        return Status::Error(StatusCode::Common_InvalidArgument, "invalid AppView surface info");
+    }
+    if (surface.IsValid())
+        return Status::Error(StatusCode::Common_InvalidState,
+                             "close the existing AppView surface before opening another");
+
+    const size_t mapping_size = static_cast<size_t>(info.size());
+    const int fd = ::shm_open(info.name().c_str(), O_RDWR, 0);
+    if (fd < 0) {
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             "open AppView shared memory failed: " +
+                             std::string(std::strerror(errno)));
+    }
+    void* mapping = ::mmap(nullptr, mapping_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mapping == MAP_FAILED) {
+        const int saved_errno = errno;
+        (void)::close(fd);
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             "map AppView shared memory failed: " +
+                             std::string(std::strerror(saved_errno)));
+    }
+    auto* header = static_cast<detail::AppViewSharedHeader*>(mapping);
+    const uint64_t minimum_size = static_cast<uint64_t>(sizeof(*header)) +
+                                  static_cast<uint64_t>(info.stride()) * info.height();
+    if (header->magic != detail::kAppViewShmMagic ||
+        header->version != detail::kAppViewShmVersion ||
+        header->header_size != sizeof(*header) ||
+        header->width != info.width() || header->height != info.height() ||
+        header->stride != info.stride() ||
+        header->pixel_format != detail::kAppViewPixelFormatBgra8888 ||
+        header->payload_size < static_cast<uint64_t>(info.stride()) * info.height() ||
+        minimum_size > info.size()) {
+        (void)::munmap(mapping, mapping_size);
+        (void)::close(fd);
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             "AppView shared memory header does not match reply");
+    }
+
+    surface.Close();
+    if (!surface.impl_) surface.impl_ = std::make_unique<AppViewSurface::Impl>();
+    surface.impl_->surface_id = info.surface_id();
+    surface.impl_->fd = fd;
+    surface.impl_->mapping = mapping;
+    surface.impl_->mapping_size = mapping_size;
+    surface.impl_->header = header;
+    surface.impl_->pixels = static_cast<uint8_t*>(mapping) + sizeof(*header);
+    std::weak_ptr<Impl> weak_owner = impl_;
+    surface.impl_->notify_frame_ready = [weak_owner](uint32_t surface_id, uint64_t frame_seq) {
+        auto owner = weak_owner.lock();
+        if (!owner || !owner->IsSessionReady()) {
+            return Status::Error(StatusCode::Common_NotConnected,
+                                 "AppView owner Session is not connected");
+        }
+        auto packet = MakePackage(kavio::ipc::proto::MSG_A2P_NTF_APP_VIEW_FRAME_READY, 0);
+        auto* body = packet.mutable_payload()->mutable_a2p_ntf_app_view_frame_ready();
+        body->set_surface_id(surface_id);
+        body->set_frame_seq(frame_seq);
+        return owner->SendPacket(packet);
+    };
+    return Status::Ok();
+}
+
+Status KavioClient::DestroyAppViewSurface(uint32_t surface_id, uint64_t& request_id) {
+    if (!surface_id)
+        return Status::Error(StatusCode::Common_InvalidArgument, "invalid AppView surface id");
+    if (!impl_->IsSessionReady())
+        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
+    const auto id = impl_->AllocTrackId();
+    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_DESTROY_APP_VIEW_SURFACE, id);
+    req.mutable_payload()->mutable_a2p_req_destroy_app_view_surface()->set_surface_id(surface_id);
+    const auto st = impl_->SendPacket(req);
+    if (st.ok()) request_id = id;
+    return st;
 }
 
 Status KavioClient::CloseSession(uint32_t session_id, uint64_t& request_id) {

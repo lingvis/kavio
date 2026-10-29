@@ -10,6 +10,7 @@
 #pragma once
 
 #include <kavio/Types.h>
+#include <kavio/AppViewSurface.h>
 #include <json/json.h>
 #include <functional>
 #include "input.pb.h"
@@ -226,6 +227,26 @@ public:
      * @return 本地发送状态；结果经 OnMessage 返回。
      */
     Status DestroyTxSurface(uint32_t shm_id, uint64_t& request_id);
+
+    /**
+     * @brief 异步创建独立的全屏 AppView BGRA8888 画布，不属于 TX Overlay。
+     * @param[out] request_id 本地发送成功后输出的 track_id。
+     * @note 收到 MSG_P2A_RSP_CREATE_APP_VIEW_SURFACE 后调用 OpenAppViewSurface。
+     */
+    Status CreateAppViewSurface(uint64_t& request_id);
+
+    /**
+     * @brief 根据 Platform 的创建回复映射 AppView 共享画布，不发送 IPC。
+     */
+    Status OpenAppViewSurface(
+        const kavio::ipc::proto::AppViewSurfaceInfoPb& info,
+        AppViewSurface& surface);
+
+    /**
+     * @brief 异步请求销毁独立 AppView 画布。
+     * @param[out] request_id 本地发送成功后输出的 track_id。
+     */
+    Status DestroyAppViewSurface(uint32_t surface_id, uint64_t& request_id);
 
     /**
      * @brief 异步关闭指定 Session。
