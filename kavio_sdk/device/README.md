@@ -500,3 +500,15 @@ build/sdk_proto_src/
 | Host ↔ Device USB Channel | `kavio_app/demo_communication` |
 | 图片、App Panel、TX 联动 | `kavio_app/demo_panel_image` |
 | Python Device Component | `kavio_app/demo_metrics_panel` |
+
+
+## AppView Surface lifecycle contract
+
+`AppViewSurface` is an App-owned, session-scoped BGRA8888 shared-memory Surface. Its `Descriptor()` reports the stable dimensions, stride, format, memory model and synchronization contract. The ownership and frame lifecycle is:
+
+1. `KavioClient::CreateAppViewSurface()` creates the Platform-owned mapping and returns Surface metadata.
+2. The App acquires the process-shared write lock with `BeginWrite()` and draws only to `GetBuffer()` while the lock is held.
+3. `Present()` merges dirty regions, increments the frame sequence, releases the write lock and sends a frame-ready notification. It is asynchronous and is not a VSync fence.
+4. `Close()` releases the App process mapping. The Platform removes the owned Surface when the session closes or the explicit destroy request completes.
+
+The optional `kavio_sdk_lvgl_appview` target is an adapter over this contract. Apps that do not use LVGL link only `kavio_sdk` and draw directly to `AppViewSurface`; video Apps should continue to use the native video/NV12 path rather than routing video frames through LVGL or an extra BGRA canvas. Platform itself still uses LVGL for its built-in UI in this phase.

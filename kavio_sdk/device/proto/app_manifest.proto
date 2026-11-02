@@ -37,6 +37,15 @@ message HostComponentPb {
   bool panel = 2;
 }
 
+/* Optional extension-screen UI declaration for an AppService-managed .kap package.
+ * Absence means the package is not exposed as an extension-screen UI App. */
+message AppUiDeclarationPb {
+  string category = 1;
+  bool visible_in_launcher = 2;
+  repeated string capabilities = 3;
+  string config_schema_ref = 4;
+}
+
 message AppManifestPb {
   uint32 manifest_version = 1;
   string app_id = 2;
@@ -47,6 +56,7 @@ message AppManifestPb {
   DeviceComponentPb device = 7;
   HostComponentPb host = 8;
   repeated AppManifestFilePb files = 9;
+  AppUiDeclarationPb ui = 10;
 }
 
 message AppSignaturePb {

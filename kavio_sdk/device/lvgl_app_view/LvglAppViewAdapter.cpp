@@ -83,36 +83,92 @@ bool LvglAppViewAdapter::HandleMessage(const kavio::ipc::proto::IPCPackagePb& me
         if (!foreground_) {
             pointer_queue_.clear();
             pointer_queue_.push_back(PointerSample{last_received_x_, last_received_y_, false});
+            primary_tracking_id_ = -1;
+            primary_slot_ = -1;
+            primary_sequence_active_ = false;
+            suppress_until_all_released_ = false;
         }
         return true;
     }
-    if (type == kavio::ipc::proto::MSG_P2A_NTF_APP_VIEW_POINTER &&
-        message.payload().has_p2a_ntf_app_view_pointer()) {
-        const auto& event = message.payload().p2a_ntf_app_view_pointer();
+    if (type == kavio::ipc::proto::MSG_P2A_NTF_APP_VIEW_TOUCH_FRAME &&
+        message.payload().has_p2a_ntf_app_view_touch_frame()) {
+        const auto& event = message.payload().p2a_ntf_app_view_touch_frame();
         if (active_surface_id_ == 0 || event.surface_id() != active_surface_id_ ||
             !foreground_ || event.sequence() <= last_pointer_sequence_) return true;
         last_pointer_sequence_ = event.sequence();
-        last_received_x_ = event.x();
-        last_received_y_ = event.y();
-        if (event.cancelled()) {
-            pointer_queue_.clear();
-            pointer_queue_.push_back(PointerSample{event.x(), event.y(), false});
-        } else {
+
+        const auto queue_sample = [this](const PointerSample& sample) {
             // Preserve transitions; coalesce only continuous moves so a fast
             // press+release between LVGL ticks still reaches the indev driver.
-            PointerSample sample{event.x(), event.y(), event.pressed()};
             if (!pointer_queue_.empty() && pointer_queue_.back().pressed && sample.pressed) {
                 pointer_queue_.back() = sample;
             } else {
                 if (pointer_queue_.size() >= kMaxPointerSamples) {
                     pointer_queue_.clear();
-                    pointer_queue_.push_back(PointerSample{event.x(), event.y(), false});
+                    pointer_queue_.push_back(PointerSample{last_received_x_, last_received_y_, false});
                 }
                 pointer_queue_.push_back(sample);
             }
+        };
+
+        if (event.cancelled()) {
+            pointer_queue_.clear();
+            pointer_queue_.push_back(PointerSample{last_received_x_, last_received_y_, false});
+            primary_tracking_id_ = -1;
+            primary_slot_ = -1;
+            primary_sequence_active_ = false;
+            suppress_until_all_released_ = true;
+            return true;
+        }
+
+        const kavio::ipc::proto::AppViewTouchPointPb* primary = nullptr;
+        size_t active_count = 0;
+        bool any_active = false;
+        for (const auto& point : event.points()) {
+            if (!point.active()) continue;
+            any_active = true;
+            ++active_count;
+            if (primary_sequence_active_) {
+                const bool identity_matches = primary_tracking_id_ >= 0
+                    ? point.tracking_id() == primary_tracking_id_
+                    : point.slot() == primary_slot_;
+                if (identity_matches) primary = &point;
+            }
+        }
+
+        if (suppress_until_all_released_) {
+            if (!any_active) suppress_until_all_released_ = false;
+            return true;
+        }
+
+        if (!primary_sequence_active_) {
+            if (!any_active) return true;
+            for (const auto& point : event.points()) {
+                if (point.active()) { primary = &point; break; }
+            }
+            if (!primary) return true;
+            primary_tracking_id_ = primary->tracking_id();
+            primary_slot_ = primary->slot();
+            primary_sequence_active_ = true;
+        }
+
+        if (primary) {
+            last_received_x_ = primary->x();
+            last_received_y_ = primary->y();
+            queue_sample(PointerSample{last_received_x_, last_received_y_, true});
+        } else {
+            // The primary finger was lifted while another finger remains. Emit
+            // one UP and suppress the remainder; never reclassify the remaining
+            // finger as a fresh LVGL click within the same physical sequence.
+            queue_sample(PointerSample{last_received_x_, last_received_y_, false});
+            primary_tracking_id_ = -1;
+            primary_slot_ = -1;
+            primary_sequence_active_ = false;
+            suppress_until_all_released_ = any_active || active_count != 0;
         }
         return true;
     }
+
     if (!creating_) return false;
 
     const uint64_t track_id = message.header().track_id();

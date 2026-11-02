@@ -21,7 +21,7 @@
 
 // Public App package / configuration format versions.
 // Shared by the packaging tools, Platform and Windows host.
-#define KAVIO_MANIFEST_VERSION 1U
+#define KAVIO_MANIFEST_VERSION 2U
 #define KAVIO_CONFIG_DEFINITION_VERSION "2.0"
 
 #define KAVIO_SDK_STRINGIFY_IMPL(value) #value

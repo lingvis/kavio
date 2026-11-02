@@ -93,6 +93,10 @@ private:
     uint64_t last_pointer_sequence_ = 0;     // mutex_
     int32_t last_received_x_ = 0;            // mutex_
     int32_t last_received_y_ = 0;            // mutex_
+    int32_t primary_tracking_id_ = -1;        // mutex_; LVGL projects multi-touch to one pointer
+    int32_t primary_slot_ = -1;               // mutex_; fallback identity if tracking_id is unavailable
+    bool primary_sequence_active_ = false;    // mutex_
+    bool suppress_until_all_released_ = false; // mutex_; do not turn a second finger into a new click
     bool foreground_ = false;                // mutex_
     uint32_t pending_visible_surface_id_ = 0; // mutex_
     bool pending_visible_ = false;           // mutex_

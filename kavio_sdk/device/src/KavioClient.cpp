@@ -1163,6 +1163,19 @@ uint32_t AppViewSurface::width() const noexcept { return IsValid() ? impl_->head
 uint32_t AppViewSurface::height() const noexcept { return IsValid() ? impl_->header->height : 0; }
 uint32_t AppViewSurface::stride() const noexcept { return IsValid() ? impl_->header->stride : 0; }
 
+AppViewSurfaceDescriptor AppViewSurface::Descriptor() const noexcept {
+    AppViewSurfaceDescriptor descriptor;
+    if (!IsValid()) return descriptor;
+    descriptor.id = impl_->surface_id;
+    descriptor.width = impl_->header->width;
+    descriptor.height = impl_->header->height;
+    descriptor.stride = impl_->header->stride;
+    descriptor.format = AppViewSurfaceFormat::kBgra8888;
+    descriptor.memory = AppViewSurfaceMemory::kSharedMemory;
+    descriptor.synchronization = AppViewSurfaceSync::kBeginWritePresent;
+    return descriptor;
+}
+
 Status AppViewSurface::BeginWrite() {
     if (!IsValid()) {
         return Status::Error(StatusCode::Common_InvalidState, "AppView surface is not valid");

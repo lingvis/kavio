@@ -73,6 +73,10 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 CONFIG_MAX_FIELDS = 128
 # Required in the package source directory and copied unchanged into the .kap.
 SCHEMA_DESCRIPTION_PATH = "schema_description.json"
+SUPPORTED_UI_CAPABILITIES = {
+    "ui", "settings", "video", "lvgl", "shm_surface", "background",
+    "screenshot", "external_input", "configurable", "diagnostics",
+}
 CONFIG_MAX_JSON_BYTES = 1024 * 1024
 FIELD_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 ROOT = TOOLS_DIR.parents[1]
@@ -168,6 +172,8 @@ def require_string_list(value: object, field: str) -> list[str]:
 def validate_app_id(value: str) -> None:
     if len(value) > 128:
         raise PackageError("appId must not exceed 128 characters")
+    if value.startswith(("kavio.builtin.", "com.kavio.builtin.")):
+        raise PackageError("appId uses a reserved Kavio builtin namespace")
     previous_dot = False
     for index, character in enumerate(value):
         valid = character.isascii() and (
@@ -498,7 +504,7 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
                    package_paths: set[str]) -> app_manifest_pb2.AppManifestPb:
     config_allowed = {
         "packageConfigVersion", "appId", "version", "name", "description",
-        "icon", "device", "host",
+        "icon", "device", "host", "ui",
     }
     config_unknown = set(config) - config_allowed
     if config_unknown:
@@ -587,6 +593,61 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
         raise PackageError("device.python is valid only when device.runtime is 'python'")
 
     host_value = config.get("host")
+    # Every package carries UI metadata in the generated AppManifest.
+    # Package configuration may omit the `ui` object; when it does, the builder
+    # emits the standard AppView declaration. This keeps kavio_package.json free
+    # of duplicated UI metadata while preserving one device-side contract.
+    ui_value = config.get("ui")
+    if ui_value is None:
+        ui = {}
+        default_capabilities = ["ui", "shm_surface"]
+        default_category = "general"
+        default_visible_in_launcher = True
+    else:
+        ui = require_object(ui_value, "ui")
+        default_capabilities = []
+        default_category = "general"
+        default_visible_in_launcher = True
+
+    ui_allowed = {"category", "visibleInLauncher", "capabilities", "configSchemaRef"}
+    ui_unknown = set(ui) - ui_allowed
+    if ui_unknown:
+        raise PackageError(
+            "ui contains unsupported fields: " + ", ".join(sorted(ui_unknown))
+        )
+    category = optional_string(ui.get("category", default_category), "ui.category")
+    if len(category.encode("utf-8")) > 64:
+        raise PackageError("ui.category must not exceed 64 UTF-8 bytes")
+    visible_in_launcher = require_bool(
+        ui.get("visibleInLauncher", default_visible_in_launcher), "ui.visibleInLauncher")
+    capabilities = require_string_list(
+        ui.get("capabilities", default_capabilities), "ui.capabilities")
+    if not capabilities:
+        raise PackageError("ui.capabilities must include at least 'ui'")
+    if len(set(capabilities)) != len(capabilities):
+        raise PackageError("ui.capabilities must not contain duplicate values")
+    for capability in capabilities:
+        if capability not in SUPPORTED_UI_CAPABILITIES:
+            raise PackageError(f"unsupported ui capability: {capability}")
+    if "ui" not in capabilities:
+        raise PackageError("ui.capabilities must include 'ui'")
+    if visible_in_launcher and not any(
+        capability in capabilities for capability in ("lvgl", "shm_surface", "video")
+    ):
+        raise PackageError(
+            "ui.visibleInLauncher requires one of 'lvgl', 'shm_surface' or 'video'"
+        )
+    config_schema_default = "schema_description.json" if (source_dir / "schema_description.json").is_file() else ""
+    config_schema_ref = optional_string(
+        ui.get("configSchemaRef", config_schema_default), "ui.configSchemaRef")
+    if len(config_schema_ref.encode("utf-8")) > 128:
+        raise PackageError("ui.configSchemaRef must not exceed 128 UTF-8 bytes")
+    manifest_ui = manifest.ui
+    manifest_ui.category = category
+    manifest_ui.visible_in_launcher = visible_in_launcher
+    manifest_ui.capabilities.extend(capabilities)
+    manifest_ui.config_schema_ref = config_schema_ref
+
     if host_value is not None:
         host = require_object(host_value, "host")
         host_allowed = {"directory", "binary", "panel"}

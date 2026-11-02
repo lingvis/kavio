@@ -9,6 +9,21 @@
 
 namespace kavio {
 
+enum class AppViewSurfaceFormat : uint32_t { kUnknown = 0, kBgra8888 = 1 };
+enum class AppViewSurfaceMemory : uint32_t { kUnknown = 0, kSharedMemory = 1 };
+enum class AppViewSurfaceSync : uint32_t { kUnknown = 0, kBeginWritePresent = 1 };
+
+/** Stable, device-independent metadata for an App-owned full-screen surface. */
+struct AppViewSurfaceDescriptor {
+    uint32_t id = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t stride = 0;
+    AppViewSurfaceFormat format = AppViewSurfaceFormat::kUnknown;
+    AppViewSurfaceMemory memory = AppViewSurfaceMemory::kUnknown;
+    AppViewSurfaceSync synchronization = AppViewSurfaceSync::kUnknown;
+};
+
 /**
  * @brief Full-screen AppView canvas owned by the current App IPC Session.
  *
@@ -33,8 +48,13 @@ public:
     uint32_t width() const noexcept;
     uint32_t height() const noexcept;
     uint32_t stride() const noexcept;
+    AppViewSurfaceDescriptor Descriptor() const noexcept;
 
-    /** Lock the shared canvas for a write operation. */
+    /**
+     * Lock the App-owned shared canvas for a write operation.
+     * Platform does not read the pixels while this lock is held. The lock is
+     * process-shared and robust; a failed write must not be followed by Present().
+     */
     Status BeginWrite();
 
     /**
