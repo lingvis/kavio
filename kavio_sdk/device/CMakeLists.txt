@@ -205,6 +205,7 @@ kavio_collect_cpp_sources(KAVIO_SDK_SOURCES ${KAVIO_SDK_SRC_DIR})
 list(REMOVE_ITEM KAVIO_SDK_SOURCES
     "${KAVIO_SDK_SRC_DIR}/internal/ShmBase.cpp"
     "${KAVIO_SDK_SRC_DIR}/internal/FrameShm.cpp"
+    "${KAVIO_SDK_SRC_DIR}/LvglAppViewAdapter.cpp"
 )
 
 add_library(kavio_sdk STATIC ${KAVIO_SDK_SOURCES})
@@ -244,17 +245,10 @@ set_target_properties(kavio_sdk PROPERTIES
 
 # Optional LVGL adapter for full-screen AppView rendering. The core Device SDK
 # remains buildable without LVGL; AppView does not use TX Overlay surfaces.
-option(KAVIO_BUILD_LVGL_APPVIEW_ADAPTER
+option(KAVIO_BUILD_LVGL_ADAPTER
     "Build the optional LVGL 9.4 AppView adapter when LVGL source/config are available" ON)
 
 set(_KAVIO_LVGL_DEFAULT_ROOT "${KAVIO_SDK_DEVICE_DIR}/3rdParty/lvgl-9.4.0")
-if(NOT EXISTS "${_KAVIO_LVGL_DEFAULT_ROOT}/CMakeLists.txt" AND
-   EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../kavio_platform/3rdParty/lvgl-9.4.0/CMakeLists.txt")
-    set(_KAVIO_LVGL_DEFAULT_ROOT
-        "${CMAKE_CURRENT_LIST_DIR}/../../../kavio_platform/3rdParty/lvgl-9.4.0")
-endif()
-# Keep the Device SDK independent from Platform source directories.
-# AppView's optional LVGL adapter uses the SDK-local FreeType dependency only.
 set(_KAVIO_FREETYPE_DEFAULT_ROOT "${KAVIO_SDK_DEVICE_DIR}/3rdParty/freetype-2.10.0")
 if(NOT DEFINED KAVIO_FREETYPE_ROOT OR KAVIO_FREETYPE_ROOT STREQUAL "")
     set(KAVIO_FREETYPE_ROOT "${_KAVIO_FREETYPE_DEFAULT_ROOT}" CACHE PATH
@@ -271,7 +265,7 @@ else()
         "Path to LVGL 9.4.0 source used by the AppView adapter")
 endif()
 
-# Prefer the SDK-owned LVGL configuration; do not silently inherit Platform config.
+# Use the SDK-local LVGL configuration by default.
 set(_KAVIO_LV_CONF_DEFAULT "${KAVIO_SDK_DEVICE_DIR}/lv_conf.h")
 if(NOT DEFINED KAVIO_LV_CONF_PATH OR KAVIO_LV_CONF_PATH STREQUAL "")
     set(KAVIO_LV_CONF_PATH "${_KAVIO_LV_CONF_DEFAULT}" CACHE FILEPATH
@@ -281,7 +275,7 @@ else()
         "LVGL configuration used by the AppView adapter")
 endif()
 
-if(KAVIO_BUILD_LVGL_APPVIEW_ADAPTER AND
+if(KAVIO_BUILD_LVGL_ADAPTER AND
    EXISTS "${KAVIO_LVGL_ROOT}/CMakeLists.txt" AND
    EXISTS "${KAVIO_LV_CONF_PATH}" AND
    EXISTS "${KAVIO_FREETYPE_ROOT}/CMakeLists.txt")
@@ -322,7 +316,7 @@ if(KAVIO_BUILD_LVGL_APPVIEW_ADAPTER AND
     endif()
 
     if(NOT TARGET lvgl AND NOT TARGET lvgl::lvgl)
-        add_subdirectory("${KAVIO_LVGL_ROOT}" lvgl_appview_build EXCLUDE_FROM_ALL)
+        add_subdirectory("${KAVIO_LVGL_ROOT}" lvgl_adapter_build EXCLUDE_FROM_ALL)
     endif()
     if(TARGET lvgl::lvgl)
         set(_KAVIO_LVGL_TARGET lvgl::lvgl)
@@ -339,24 +333,24 @@ if(KAVIO_BUILD_LVGL_APPVIEW_ADAPTER AND
         target_link_libraries(lvgl PUBLIC ${_KAVIO_FREETYPE_TARGET})
     endif()
 
-    add_library(kavio_sdk_lvgl_appview STATIC
-        "${KAVIO_SDK_DEVICE_DIR}/lvgl_app_view/LvglAppViewAdapter.cpp")
-    target_include_directories(kavio_sdk_lvgl_appview
+    add_library(kavio_sdk_lvgl STATIC
+        "${KAVIO_SDK_DEVICE_DIR}/src/LvglAppViewAdapter.cpp")
+    target_include_directories(kavio_sdk_lvgl
         PUBLIC
             "${KAVIO_SDK_INC_DIR}"
             "${KAVIO_LVGL_ROOT}/src"
             "${KAVIO_LVGL_ROOT}/src/libs/freetype"
             "${KAVIO_FREETYPE_ROOT}/include"
             "${_KAVIO_LV_CONF_DIR}")
-    target_compile_definitions(kavio_sdk_lvgl_appview PUBLIC LV_CONF_INCLUDE_SIMPLE)
-    target_link_libraries(kavio_sdk_lvgl_appview PUBLIC kavio_sdk ${_KAVIO_LVGL_TARGET} ${_KAVIO_FREETYPE_TARGET})
-    target_compile_options(kavio_sdk_lvgl_appview PRIVATE -Wall -Wno-deprecated-declarations -frtti)
+    target_compile_definitions(kavio_sdk_lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
+    target_link_libraries(kavio_sdk_lvgl PUBLIC kavio_sdk ${_KAVIO_LVGL_TARGET} ${_KAVIO_FREETYPE_TARGET})
+    target_compile_options(kavio_sdk_lvgl PRIVATE -Wall -Wno-deprecated-declarations -frtti)
     if(KAVIO_WARNINGS_AS_ERRORS)
-        target_compile_options(kavio_sdk_lvgl_appview PRIVATE -Werror)
+        target_compile_options(kavio_sdk_lvgl PRIVATE -Werror)
     endif()
 else()
     message(STATUS
-        "Skipping optional kavio_sdk_lvgl_appview target: LVGL 9.4 source, lv_conf.h, or FreeType source not found. "
+        "Skipping optional kavio_sdk_lvgl target: LVGL 9.4 source, lv_conf.h, or FreeType source not found. "
         "Set KAVIO_LVGL_ROOT, KAVIO_LV_CONF_PATH, and KAVIO_FREETYPE_ROOT to enable it.")
 endif()
 
@@ -375,16 +369,16 @@ set(KAVIO_DEVICE_SDK_CONFIG_GENERATOR
 
 set(_KAVIO_SDK_PACKAGE_OPTIONAL_ARGS)
 set(_KAVIO_SDK_PACKAGE_OPTIONAL_DEPS)
-if(TARGET kavio_sdk_lvgl_appview)
+if(TARGET kavio_sdk_lvgl)
     list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_ARGS
-        "-DKAVIO_LVGL_APPVIEW_LIBRARY=$<TARGET_FILE:kavio_sdk_lvgl_appview>"
+        "-DKAVIO_LVGL_ADAPTER_LIBRARY=$<TARGET_FILE:kavio_sdk_lvgl>"
         "-DKAVIO_LVGL_LIBRARY=$<TARGET_FILE:${_KAVIO_LVGL_TARGET}>"
         "-DKAVIO_LVGL_INCLUDE_DIR=${KAVIO_LVGL_ROOT}/src"
         "-DKAVIO_LV_CONF_DIR=${_KAVIO_LV_CONF_DIR}"
         "-DKAVIO_FREETYPE_LIBRARY=$<TARGET_FILE:${_KAVIO_FREETYPE_TARGET}>"
         "-DKAVIO_FREETYPE_INCLUDE_DIR=${KAVIO_FREETYPE_ROOT}/include")
     list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_DEPS
-        kavio_sdk_lvgl_appview ${_KAVIO_LVGL_TARGET} ${_KAVIO_FREETYPE_TARGET})
+        kavio_sdk_lvgl ${_KAVIO_LVGL_TARGET} ${_KAVIO_FREETYPE_TARGET})
 endif()
 
 add_custom_target(kavio_device_sdk_package

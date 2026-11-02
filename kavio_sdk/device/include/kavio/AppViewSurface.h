@@ -29,7 +29,7 @@ struct AppViewSurfaceDescriptor {
  *
  * This surface is independent from TX Overlay surfaces. It is a persistent
  * BGRA8888 canvas presented to the device's secondary display. The caller must
- * bracket pixel writes with BeginWrite() and Present() so Platform never reads
+ * bracket pixel writes with BeginWrite() and Present() so the rendering consumer never reads
  * the canvas while it is being modified.
  */
 class AppViewSurface {

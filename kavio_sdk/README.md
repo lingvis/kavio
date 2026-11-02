@@ -44,6 +44,8 @@ Windows                                      Kavio Device
 
 App 开发者只需要使用公开 SDK API，不需要依赖 Kavio Runtime 的内部通信、进程管理或视频管线实现。
 
+设备侧 AppRegistry（设备完整 App ID 列表、顺序和持久化）属于 Platform/AppService 内部控制面，不属于公开 Device SDK 或 Host SDK 契约。App 只处理自己的 Manifest、配置和运行状态；公共 SDK 不暴露设备全局 App 列表。
+
 ## 2. 选择开发入口
 
 ### Device Component：C++
@@ -245,17 +247,15 @@ Kavio SDK 不把 OpenCV 作为公共依赖。App 如果需要 OpenCV、FFmpeg �
 └── kavio_app/
 ```
 
-`kavio_app` 提供可直接参考的完整 App：
+当前公开仓库的主综合示例为 `kavio_app/sdk_showcase`：
 
 | Demo | Device | Host | 主要用途 |
 | --- | --- | --- | --- |
-| `demo_rx_tx` | C++ | 无 | RX、TX Surface、输入事件和 Device 生命周期 |
-| `demo_communication` | C++ | DLL | USB Channel、Windows 数据采集和 App Configuration |
-| `demo_panel_image` | C++ | DLL | App Panel、图片传输和 TX 图层联动 |
-| `demo_metrics_panel` | Python | DLL | Python Device Component、USB Channel 和 App Panel |
-| `demo_virtual_hdmi` | C++ | DLL | 虚拟显示捕获、图像流传输及 App Panel |
+| `sdk_showcase` | C++ | DLL + Panel | AppView/LVGL、USB App Channel、HDMI RX/TX Partial、Keyboard/Mouse、H.264 Capture、Schema 配置更新、Runtime 与 Host Panel |
 
-第一次开发建议从 `kavio_app/README.md` 开始，再根据目标选择对应 Demo 和 SDK 文档。
+其 `common/DemoProtocol.h` 是 Demo 私有共享协议，仅供该 App 的 Device/Host 两端共同使用，不属于 SDK 公共 API。
+
+Python Device SDK 仍受支持，具体 API 与构建方式见 `kavio_sdk/device/README.md`；当前仓库不再维护单独的 Python Demo。
 
 ## 10. Kavio App Package
 

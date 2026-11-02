@@ -131,11 +131,24 @@ kavio_sdk/device/3rdParty/protobuf-3.21.12/
 
 `*_pb2.py` 与 `sdk_version.py` 均由构建生成，不应作为源码手动维护或提交。
 
-### 3.2 App 自有第三方库
+### 3.2 LVGL 与 FreeType
+
+Device SDK 统一持有 Platform 与第三方 App 共用的 LVGL / FreeType 源码：
+
+```text
+kavio_sdk/device/3rdParty/lvgl-9.4.0/
+kavio_sdk/device/3rdParty/freetype-2.10.0/
+```
+
+这两个目录是工程中的唯一源码副本。`kavio_platform` 不再维护自己的 LVGL / FreeType 3rdParty 副本；Platform 构建时直接使用上述 SDK-owned（SDK 所有）依赖。SDK 本身也不得回退到 `kavio_platform/3rdParty` 查找 LVGL 或 FreeType。
+
+Platform 可以继续使用自己的 `lv_conf.h` 来决定 Platform 内置 UI 的 LVGL 编译配置；这不改变 LVGL 源码及 FreeType 源码统一由 Device SDK 持有的依赖边界。外部 App 使用 `Kavio::DeviceSdkLvgl` 时使用 SDK 的 LVGL Adapter 配置。
+
+### 3.3 App 自有第三方库
 
 Kavio SDK 不提供 OpenCV、TBB 等通用 App 开发库。SDK 的 `device/3rdParty` 只保存 Device SDK 自身构建所必需的依赖。
 
-`demo_rx_tx` 直接绘制 BGRA 像素，不依赖 OpenCV/TBB。新 App 如果需要 OpenCV，应在自己的项目目录或项目依赖管理中声明，不得把 OpenCV 作为 Kavio SDK 公共库使用。
+`sdk_showcase` 的公开能力示例不依赖 OpenCV/TBB。新 App 如果需要 OpenCV，应在自己的项目目录或项目依赖管理中声明，不得把 OpenCV 作为 Kavio SDK 公共库使用。
 
 ---
 
@@ -183,10 +196,10 @@ Native C++ App 编译前必须先构建一次 Device SDK。SDK 构建会生成 `
 
 ### 5.1 ARM 板端本机编译
 
-以 `demo_communication` 为例：
+以 `sdk_showcase` 为例：
 
 ```bash
-cd kavio_app/demo_communication/device
+cd kavio_app/sdk_showcase/device
 ./build.sh
 ```
 
@@ -234,15 +247,15 @@ kavio_app/<project_name>/output/device/
 
 Windows Host Component 的解决方案和工程文件全部位于项目的 `host/`。
 
-以 `demo_communication` 为例：
+以 `sdk_showcase` 为例：
 
 ```text
-kavio_app/demo_communication/host/DemoAppCommunication.sln
+kavio_app/sdk_showcase/host/KavioSdkShowcaseHost.sln
 ```
 
 请使用 **Visual Studio 2015 或更高版本**打开该 `.sln`，选择 `x64` 和需要的 `Debug/Release` 配置后直接编译。当前示例工程使用 `v140` 工具集；如果更高版本 Visual Studio 未安装该工具集，请按 IDE 提示安装对应 C++ 工具集或显式重定向工程。
 
-PostBuildEvent（构建后事件）统一将主应用命名为 `host.dll`，并复制到：
+Host 工程应将主 DLL 命名为 `host.dll`，并直接输出或在构建后复制到：
 
 ```text
 kavio_app/<project_name>/output/host/host.dll
@@ -273,26 +286,26 @@ python3 kavio_app.py list
 ### 7.2 检查产物
 
 ```bash
-python3 kavio_app.py status demo_communication
+python3 kavio_app.py status sdk_showcase
 ```
 
 ### 7.3 生成安装包
 
 ```bash
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py package sdk_showcase
 ```
 
 默认输出：
 
 ```text
-kavio_app/demo_communication/dist/demo_communication-1.0.0.kap
+kavio_app/sdk_showcase/dist/sdk_showcase-1.0.0.kap
 ```
 
 指定输出路径：
 
 ```bash
-python3 kavio_app.py package demo_communication \
-  --output /tmp/demo_communication.kap
+python3 kavio_app.py package sdk_showcase \
+  --output /tmp/sdk_showcase.kap
 ```
 
 `tools/build_package.py` 是低级打包器。它要求调用方已经准备好包含清单和全部运行文件的完整暂存目录；普通开发流程不应直接用项目的 `package/` 调用它。
@@ -317,7 +330,7 @@ kavio_app/my_project/
 └── dist/                   # 自动生成
 ```
 
-设备端 `CMakeLists.txt` 必须是可独立配置的工程。关键路径计算方式可参考两个现有 Demo：
+设备端 `CMakeLists.txt` 必须是可独立配置的工程。关键路径计算方式可参考现有综合 Demo：
 
 ```cmake
 get_filename_component(KAVIO_PROJECT_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
@@ -342,40 +355,50 @@ find_package(KavioDeviceSdk CONFIG REQUIRED
 
 ## 9. Device SDK 第三方依赖边界
 
-`kavio_sdk/device/3rdParty` 只承载 SDK 自身必需依赖。业务 App 的图像、AI、网络等第三方库由 App 自己管理。`demo_rx_tx` 不依赖 OpenCV，可作为无额外图像库的 RX/TX 示例。
+`kavio_sdk/device/3rdParty` 只承载 SDK 自身必需依赖。业务 App 的图像、AI、网络等第三方库由 App 自己管理。`sdk_showcase` 不依赖 OpenCV，可作为无额外图像库的 AppView、RX/TX 和 USB Channel 综合示例。其中 RX 示例读取单帧并在 AppView 中缩放预览；TX 示例最多保留 3 个 Surface：普通 200x120 Surface 通过 `WriteFrame()` 更新目标位置并以约 30 Hz 自动移动，Partial 示例使用 320x200 Surface 内移动的 96x72 `valid_rect` 展示部分发布/合成语义；Keyboard 示例通过 `SendInputEvent()` 覆盖 A–Z、0–9、系统/导航/F1–F12；Mouse 示例使用触摸区域实时映射绝对鼠标坐标，并提供左右键和滚轮测试。H.264 示例订阅公共编码流并把 Annex-B 包保存到 `$KAVIO_APP_DATA_DIR/cache/`，不解码播放；Schema 示例通过 `GetAppConfig()` / `UpdateAppConfig()` / `ResetAppConfigToDefaults()` 展示配置更新。Host Panel 的传输测试支持 1–1023 KB 载荷，并展示基于确认字节计算的当前/平均 Host→Device 有效吞吐率。
 
 ---
 
 ## 10. 当前示例
 
-### 10.1 demo_communication（系统资源监控）
+当前公开仓库提供两个层级的参考：
 
-设备端：
+- `app_frame`：最小 Native C++ App 模板，App ID 为 `com.kavio.template.app-frame`。只保留 `KavioClient -> Session -> AppView -> LVGL -> Shutdown` 基础链路，适合复制后直接开始业务开发。
+- `sdk_showcase`：综合 SDK 能力示例，App ID 为 `com.kavio.demo.sdk-showcase`。覆盖 AppView/LVGL、USB App Channel（可配置载荷、完整性和吞吐率测试）、独立的 HDMI RX 单帧预览与 HDMI TX 多 Surface/Partial 测试、独立 Keyboard/Mouse 输入输出、H.264 公共流订阅读取与原始缓存、Schema 配置更新、Runtime Statistics 和 Windows Host Panel。视频播放仍不在当前示例范围内。
+
+新 App 默认应从 `app_frame` 开始；需要某项能力的完整用法时再从 `sdk_showcase` 提取对应实现。
+
+最小模板设备端：
 
 ```bash
-cd kavio_app/demo_communication/device
+cd kavio_app/app_frame/device
 ./build.sh -r
 ```
 
-Windows Host Component（主机组件）：使用 Visual Studio 2015 或更高版本打开 `host/DemoAppCommunication.sln`，选择 `x64` 和需要的 `Debug/Release` 配置后编译。
+综合示例设备端：
+
+```bash
+cd kavio_app/sdk_showcase/device
+./build.sh -r
+```
+
+Windows Host Component：使用 Visual Studio 2015 或更高版本打开：
+
+```text
+kavio_app/sdk_showcase/host/KavioSdkShowcaseHost.sln
+```
+
+选择 `x64` 和需要的 `Debug/Release` 配置后编译。
 
 检查和打包：
 
 ```bash
 cd kavio_app
-python3 kavio_app.py status demo_communication
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py status sdk_showcase
+python3 kavio_app.py package sdk_showcase
 ```
 
-### 10.2 demo_rx_tx（收发共享内存示例）
-
-```bash
-cd kavio_app/demo_rx_tx/device
-./build.sh -r
-cd ../..
-python3 kavio_app.py status demo_rx_tx
-python3 kavio_app.py package demo_rx_tx
-```
+该 Demo 的 Host/Device 私有共享协议位于 `kavio_app/sdk_showcase/common/DemoProtocol.h`，不属于 `kavio_sdk/common`，也不构成 Platform/KavioWin 公共协议。
 
 ---
 
@@ -408,7 +431,7 @@ project_root/kavio_app/
 
 - 是否运行了当前项目的 `device/build.sh`；
 - 输出文件名是否与 `device.entry` 一致；
-- 文件是否位于 `output/<device.directory>/`。
+- 文件是否位于固定的 `output/device/`。
 
 ### 11.4 status 显示 host.dll 缺失
 
@@ -417,7 +440,7 @@ project_root/kavio_app/
 - 是否使用与当前 KavioWin 工程一致的 Visual Studio 配置构建；
 - PostBuildEvent 是否成功；
 - `KavioOutputRoot` 是否指向 `..\output`；
-- 文件是否位于 `output/<host.directory>/host.dll`。
+- 文件是否位于固定的 `output/host/host.dll`。
 
 ### 11.5 package 中是否可以放二进制
 
@@ -436,14 +459,14 @@ project_root/kavio_app/
 cd kavio_sdk/device
 ./build.sh -r
 
-# 构建Device Component（设备组件）
-cd ../../kavio_app/demo_communication/device
+# 构建 sdk_showcase Device Component
+cd ../../kavio_app/sdk_showcase/device
 ./build.sh -r
 
 # 检查和打包
 cd ../..
-python3 kavio_app.py status demo_communication
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py status sdk_showcase
+python3 kavio_app.py package sdk_showcase
 ```
 
-Windows：使用 Visual Studio 2015 或更高版本打开 `kavio_app/demo_communication/host/DemoAppCommunication.sln`，选择 `x64` 和需要的 `Debug/Release` 配置后编译。
+Windows：使用 Visual Studio 2015 或更高版本打开 `kavio_app/sdk_showcase/host/KavioSdkShowcaseHost.sln`，选择 `x64` 和需要的 `Debug/Release` 配置后编译。

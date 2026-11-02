@@ -83,3 +83,14 @@ C ABI 通过 `struct_size` 判断结构中哪些字段实际存在。已有字�
 KavioWin 与 KavioAppHost 的管道帧不维护独立版本号。
 
 每条消息仍必须校验 `magic`、`header_size`、`payload_size`，因为这些字段用于确认当前消息边界和读取长度。这属于帧安全校验，不属于版本兼容校验。
+## 7. App Package / Manifest 格式版本
+
+当前 `kavio_package.json` 的 `packageConfigVersion`、打包工具 `PACKAGE_CONFIG_VERSION` 和 Manifest 的 `KAVIO_MANIFEST_VERSION` 均固定为 `1`。
+
+当前 Package/Manifest 契约尚未作为需要兼容历史包的稳定格式发布，因此：
+
+- 现阶段结构调整直接修改当前契约，不通过递增 `1 -> 2 -> 3` 保存开发过程；
+- 旧 `.kap` 不要求兼容，需要按当前工具重新打包；
+- Proto 删除字段时不为未发布历史保留 `reserved`；
+- 正式对外冻结格式后，再按发布策略决定何时递增格式版本。
+

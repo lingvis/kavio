@@ -67,16 +67,13 @@ app_manifest_pb2 = None # loaded only for packaging, not for status/help
 PACKAGE_CONFIG_NAME = "kavio_package.json"
 PACKAGE_CONFIG_VERSION = 1
 GENERATED_FILE_NAMES = {"manifest.json", "signature.json"}
-APP_ICON_WIDTH = 64
-APP_ICON_HEIGHT = 64
+APP_ICON_MAX_WIDTH = 512
+APP_ICON_MAX_HEIGHT = 512
+APP_ICON_MAX_BYTES = 512 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 CONFIG_MAX_FIELDS = 128
 # Required in the package source directory and copied unchanged into the .kap.
 SCHEMA_DESCRIPTION_PATH = "schema_description.json"
-SUPPORTED_UI_CAPABILITIES = {
-    "ui", "settings", "video", "lvgl", "shm_surface", "background",
-    "screenshot", "external_input", "configurable", "diagnostics",
-}
 CONFIG_MAX_JSON_BYTES = 1024 * 1024
 FIELD_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 ROOT = TOOLS_DIR.parents[1]
@@ -233,10 +230,15 @@ def validate_regular_file(path: Path, field: str) -> None:
 
 
 def validate_app_icon(path: Path, field: str = "icon") -> None:
-    """Validate the required 64x64 PNG App icon without an image-library dependency."""
+    """Validate the required PNG App icon without an image-library dependency."""
     validate_regular_file(path, field)
     if path.suffix.lower() != ".png":
         raise PackageError(f"{field} must be a PNG file")
+    file_size = path.stat().st_size
+    if file_size > APP_ICON_MAX_BYTES:
+        raise PackageError(
+            f"{field} must not exceed {APP_ICON_MAX_BYTES // 1024} KiB; got {file_size} bytes"
+        )
     try:
         with path.open("rb") as source:
             header = source.read(24)
@@ -247,10 +249,10 @@ def validate_app_icon(path: Path, field: str = "icon") -> None:
         raise PackageError(f"{field} is not a valid PNG file")
     width = int.from_bytes(header[16:20], "big")
     height = int.from_bytes(header[20:24], "big")
-    if width != APP_ICON_WIDTH or height != APP_ICON_HEIGHT:
+    if width == 0 or height == 0 or width > APP_ICON_MAX_WIDTH or height > APP_ICON_MAX_HEIGHT:
         raise PackageError(
-            f"{field} must be exactly {APP_ICON_WIDTH}x{APP_ICON_HEIGHT} pixels; "
-            f"got {width}x{height}"
+            f"{field} dimensions must be within 1..{APP_ICON_MAX_WIDTH} x "
+            f"1..{APP_ICON_MAX_HEIGHT} pixels; got {width}x{height}"
         )
 
 
@@ -504,7 +506,7 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
                    package_paths: set[str]) -> app_manifest_pb2.AppManifestPb:
     config_allowed = {
         "packageConfigVersion", "appId", "version", "name", "description",
-        "icon", "device", "host", "ui",
+        "device", "host",
     }
     config_unknown = set(config) - config_allowed
     if config_unknown:
@@ -525,31 +527,31 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
     manifest.version = require_string(config.get("version"), "version")
     manifest.name = require_string(config.get("name"), "name")
     manifest.description = optional_string(config.get("description"), "description")
-    # Every Kavio App must provide a 64x64 PNG icon.  The package builder
-    # rejects the package before manifest generation when the icon is missing or invalid.
-    manifest.icon = normalize_relative_path(config.get("icon"), "icon")
-    validate_app_icon(source_path(source_dir, manifest.icon, "icon"))
+
+    # Fixed package convention: every App icon is package/icon.png in the source
+    # project and icon.png at the root of the generated .kap package.
+    manifest.icon = "icon.png"
+    validate_app_icon(source_path(source_dir, manifest.icon, "icon.png"), "icon.png")
 
     device = require_object(config.get("device"), "device")
-    device_allowed = {"directory", "runtime", "entry", "arguments", "autoStart", "python"}
+    device_allowed = {"runtime", "entry", "arguments", "python"}
     device_unknown = set(device) - device_allowed
     if device_unknown:
         raise PackageError(
             f"device contains unsupported fields: {', '.join(sorted(device_unknown))}"
         )
-    device_directory = normalize_relative_path(device.get("directory"), "device.directory")
-    device_source = source_path(source_dir, device_directory, "device.directory")
+    device_source = source_path(source_dir, "device", "device output directory")
     if not device_source.is_dir() or device_source.is_symlink():
-        raise PackageError("device.directory must identify a real directory")
+        raise PackageError("device output directory must be a real directory")
 
     device_manifest = manifest.device
     device_manifest.runtime = require_string(device.get("runtime", "native"), "device.runtime")
     if device_manifest.runtime not in ("native", "python"):
         raise PackageError("device.runtime must be 'native' or 'python'")
     device_entry_relative = normalize_relative_path(device.get("entry"), "device.entry")
-    device_manifest.entry = join_package_path(device_directory, device_entry_relative, "device.entry")
+    device_manifest.entry = join_package_path("device", device_entry_relative, "device.entry")
     device_manifest.arguments.extend(require_string_list(device.get("arguments", []), "device.arguments"))
-    device_manifest.auto_start = require_bool(device.get("autoStart", False), "device.autoStart")
+    # Package metadata can no longer request automatic startup. Newly installed Apps
 
     if device_manifest.runtime == "python":
         python_config = require_object(device.get("python"), "device.python")
@@ -579,7 +581,7 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
                 allow_empty=True,
             )
             package_value = (
-                join_package_path(device_directory, value, f"device.python.{config_key}")
+                join_package_path("device", value, f"device.python.{config_key}")
                 if value else ""
             )
             setattr(python_manifest, proto_field, package_value)
@@ -593,87 +595,32 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
         raise PackageError("device.python is valid only when device.runtime is 'python'")
 
     host_value = config.get("host")
-    # Every package carries UI metadata in the generated AppManifest.
-    # Package configuration may omit the `ui` object; when it does, the builder
-    # emits the standard AppView declaration. This keeps kavio_package.json free
-    # of duplicated UI metadata while preserving one device-side contract.
-    ui_value = config.get("ui")
-    if ui_value is None:
-        ui = {}
-        default_capabilities = ["ui", "shm_surface"]
-        default_category = "general"
-        default_visible_in_launcher = True
-    else:
-        ui = require_object(ui_value, "ui")
-        default_capabilities = []
-        default_category = "general"
-        default_visible_in_launcher = True
-
-    ui_allowed = {"category", "visibleInLauncher", "capabilities", "configSchemaRef"}
-    ui_unknown = set(ui) - ui_allowed
-    if ui_unknown:
-        raise PackageError(
-            "ui contains unsupported fields: " + ", ".join(sorted(ui_unknown))
-        )
-    category = optional_string(ui.get("category", default_category), "ui.category")
-    if len(category.encode("utf-8")) > 64:
-        raise PackageError("ui.category must not exceed 64 UTF-8 bytes")
-    visible_in_launcher = require_bool(
-        ui.get("visibleInLauncher", default_visible_in_launcher), "ui.visibleInLauncher")
-    capabilities = require_string_list(
-        ui.get("capabilities", default_capabilities), "ui.capabilities")
-    if not capabilities:
-        raise PackageError("ui.capabilities must include at least 'ui'")
-    if len(set(capabilities)) != len(capabilities):
-        raise PackageError("ui.capabilities must not contain duplicate values")
-    for capability in capabilities:
-        if capability not in SUPPORTED_UI_CAPABILITIES:
-            raise PackageError(f"unsupported ui capability: {capability}")
-    if "ui" not in capabilities:
-        raise PackageError("ui.capabilities must include 'ui'")
-    if visible_in_launcher and not any(
-        capability in capabilities for capability in ("lvgl", "shm_surface", "video")
-    ):
-        raise PackageError(
-            "ui.visibleInLauncher requires one of 'lvgl', 'shm_surface' or 'video'"
-        )
-    config_schema_default = "schema_description.json" if (source_dir / "schema_description.json").is_file() else ""
-    config_schema_ref = optional_string(
-        ui.get("configSchemaRef", config_schema_default), "ui.configSchemaRef")
-    if len(config_schema_ref.encode("utf-8")) > 128:
-        raise PackageError("ui.configSchemaRef must not exceed 128 UTF-8 bytes")
-    manifest_ui = manifest.ui
-    manifest_ui.category = category
-    manifest_ui.visible_in_launcher = visible_in_launcher
-    manifest_ui.capabilities.extend(capabilities)
-    manifest_ui.config_schema_ref = config_schema_ref
-
     if host_value is not None:
         host = require_object(host_value, "host")
-        host_allowed = {"directory", "binary", "panel"}
+        host_allowed = {"binary", "panel"}
         host_unknown = set(host) - host_allowed
         if host_unknown:
             raise PackageError(
                 f"host contains unsupported fields: {', '.join(sorted(host_unknown))}"
             )
-        host_directory = normalize_relative_path(host.get("directory"), "host.directory")
-        host_source = source_path(source_dir, host_directory, "host.directory")
+        host_source = source_path(source_dir, "host", "host output directory")
         if not host_source.is_dir() or host_source.is_symlink():
-            raise PackageError("host.directory must identify a real directory")
+            raise PackageError("host output directory must be a real directory")
         host_binary_relative = normalize_relative_path(host.get("binary"), "host.binary")
-        manifest.host.binary = join_package_path(
-            host_directory, host_binary_relative, "host.binary")
+        manifest.host.binary = join_package_path("host", host_binary_relative, "host.binary")
         manifest.host.panel = require_bool(host.get("panel", False), "host.panel")
 
-    # Schema description is mandatory, including applications without configurable values.
+    # Schema description is mandatory at the fixed package root path, including
+    # applications without configurable values (represented by {}).
     validate_schema_description(source_dir)
 
-    referenced_paths: list[tuple[str, str]] = [(device_manifest.entry, "device.entry")]
-    if manifest.icon:
-        referenced_paths.append((manifest.icon, "icon"))
+    referenced_paths: list[tuple[str, str]] = [
+        (device_manifest.entry, "device.entry"),
+        (manifest.icon, "icon.png"),
+        (SCHEMA_DESCRIPTION_PATH, "schema_description.json"),
+    ]
     if manifest.HasField("host"):
         referenced_paths.append((manifest.host.binary, "host.binary"))
-    referenced_paths.append((SCHEMA_DESCRIPTION_PATH, "schema_description.json"))
     if device_manifest.runtime == "python":
         for value, field in (
             (device_manifest.python.environment_archive, "device.python.environmentArchive"),

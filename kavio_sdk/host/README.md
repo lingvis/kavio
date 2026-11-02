@@ -297,7 +297,7 @@ Kavio App Demo 约定最终 Host DLL 暂存为：
 完整 Host 示例：
 
 ```text
-kavio_app/demo_communication
-kavio_app/demo_panel_image
-kavio_app/demo_metrics_panel
+kavio_app/sdk_showcase
 ```
+
+其中 `sdk_showcase/common/DemoProtocol.h` 只由该 Demo 的 Host/Device Component 共享，不属于 Host SDK ABI。

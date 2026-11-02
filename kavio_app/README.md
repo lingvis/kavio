@@ -1,6 +1,6 @@
-# Kavio App Demo
+# Kavio App Examples
 
-`kavio_app` 提供一组可直接编译、运行和打包的 Kavio App 示例，面向需要开发自定义 Kavio App 的开发者。
+`kavio_app` 提供可直接编译、运行和打包的 Kavio App 示例，面向需要开发自定义 Kavio App 的开发者。
 
 每个 Demo 一级目录都是一个独立 App，对应一个 `appId` 和一个 `.kap` 安装包；`tools/` 保存公共打包工具。Demo 重点展示 Kavio SDK 的标准开发方式，不要求 App 开发者了解 Windows 与设备之间的底层传输实现。
 
@@ -30,7 +30,7 @@ Device Component 可以按业务需要使用：
 
 - RX：读取输入视频帧；
 - TX：创建并更新输出 Surface，用于既有 TX/Overlay 图像通道；
-- **AppView：** 通过独立 BGRA8888 共享画布向设备副屏提交全屏 UI，不使用 TX Overlay Surface；需要 LVGL 时链接可选的 `Kavio::DeviceSdkLvglAppView` 适配库；
+- **AppView：** 通过独立 BGRA8888 共享画布向设备副屏提交全屏 UI，不使用 TX Overlay Surface；需要 LVGL 时链接可选的 `Kavio::DeviceSdkLvgl` 适配库；
 - Input：发送键盘、鼠标等输入事件；
 - USB Channel：与 Windows Host Component 双向交换 App 自定义数据；
 - App Configuration：通过 SDK 查询、修改完整 JSON 配置。
@@ -92,7 +92,7 @@ App Configuration 的配置项与 App Panel 都是可选能力，且相互独立
 - Native Device Component 使用 `kavio_sdk/device/build/KavioDeviceSdkConfig.cmake` 引用预构建 SDK；
 - Python Device Component 使用 `kavio_sdk/device/py/kavio_sdk`；
 - Host Component 使用 `kavio_sdk/host/include`；
-- `.kap` 打包工具读取 `kavio_sdk/device` 中统一维护的 App Manifest 和版本定义，不依赖私有 Platform。
+- `.kap` 打包工具使用 `kavio_sdk/device` 中公开维护的 App Manifest 和版本定义。
 
 ## 3. 单个 App 的目录结构
 
@@ -133,12 +133,14 @@ cd kavio_sdk/device
 
 Native App 通过 `kavio_sdk/device/build/KavioDeviceSdkConfig.cmake` 引用已经构建好的 Device SDK 和静态库。
 
-进入对应 Demo 的 `device/`：
+新 App 建议先从最小模板 `app_frame` 开始：
 
 ```bash
-cd kavio_app/demo_communication/device
+cd kavio_app/app_frame/device
 ./build.sh -r
 ```
+
+需要查看完整 SDK 能力实现时，再参考 `sdk_showcase`。
 
 在 x86 Linux 上交叉编译时传入工具链：
 
@@ -162,12 +164,7 @@ Python App 不生成 Native 可执行文件。对应 `build.sh` 负责：
 - 合并运行依赖；
 - 清理构建机产生的 Python 缓存文件。
 
-示例：
-
-```bash
-cd kavio_app/demo_metrics_panel/device
-./build.sh
-```
+Python Device SDK 仍受支持；Python API 与构建方式见 `kavio_sdk/device/README.md`。
 
 ## 5. 构建 Host Component
 
@@ -180,7 +177,7 @@ cd kavio_app/demo_metrics_panel/device
 
 当前 Demo 工程使用 `v140` 工具集。若本机 Visual Studio 未安装该工具集，可以安装对应 C++ 工具集，或者由 Visual Studio 重定向到已安装的工具集。
 
-Post-Build Event 会把 DLL 自动暂存为：
+Host 工程应将最终 DLL 直接输出或在构建后暂存为：
 
 ```text
 <app>/output/host/host.dll
@@ -193,8 +190,8 @@ Post-Build Event 会把 DLL 自动暂存为：
 ```bash
 cd kavio_app
 python3 kavio_app.py list
-python3 kavio_app.py status demo_communication
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py status app_frame
+python3 kavio_app.py package app_frame
 ```
 
 默认输出：
@@ -206,7 +203,7 @@ python3 kavio_app.py package demo_communication
 打包前需要满足：
 
 - `package/kavio_package.json` 有效；
-- `icon` 指向实际存在的 64×64 PNG；
+- 固定文件 `package/icon.png` 存在且为有效 PNG，宽高均在 1～512 像素内，文件大小不超过 512 KiB；
 - 清单中声明的 Device/Host 产物已经存在于 `output/`；
 - 同级 `schema_description.json` 必须存在且符合标准 Schema，或为 `{}`（无配置）；
 - Python 环境安装 `protobuf>=3.20.3`。SDK 构建负责生成 Python Protobuf 绑定文件。
@@ -220,26 +217,27 @@ Schema 格式与数据持久化规则见 [`Kavio_App_Configuration_Spec.md`](../
 
 ## 7. 新建自己的 App
 
-建议从功能最接近的 Demo 复制一个新目录，然后至少修改：
+新建 Native C++ App 时，建议优先复制最小模板 `app_frame`；只有在需要具体 SDK 能力实现参考时再查看 `sdk_showcase`。复制后至少修改：
 
 1. App 目录名；
-2. `package/kavio_package.json` 中的 `appId`、`name`、`version`、`description` 和 `icon`；
-3. Device Component 的入口、构建目标和业务代码；
-4. 如果需要 Windows 能力，修改 Host Component；
-5. Host/Device 共用的 USB Channel 协议；
-6. 可选的 App Configuration 和 App Panel。
+2. `package/kavio_package.json` 中的 `appId`、`name`、`version`、`description`；
+3. 用自己的图标替换固定的 `package/icon.png`；
+4. Device Component 的入口、构建目标和业务代码；
+5. 如果需要 Windows 能力，修改 Host Component；
+6. Host/Device 共用的 USB Channel 协议；
+7. 可选的 App Configuration 和 App Panel。
 
 不要把 Kavio SDK 复制到 App 源码目录中。App 只引用仓库中的公共 SDK，打包阶段再根据运行时类型准备最终产物。
 
 ## 8. Demo 列表
 
+当前公开仓库提供一个最小开发模板和一个综合能力示例：
+
 | Demo | Device | Host | 主要用途 |
 | --- | --- | --- | --- |
-| `demo_rx_tx` | Native | 无 | RX、TX Surface、Input 和 Device SDK 生命周期 |
-| `demo_communication` | Native | DLL | USB Channel 请求/响应、Windows 指标采集、App Configuration |
-| `demo_panel_image` | Native | DLL | App Panel、PNG/GIF 解码、大块数据分块传输、TX 位置同步 |
-| `demo_metrics_panel` | Python | DLL | Python Device Component、USB Channel、Windows 指标和 App Panel |
-| `demo_virtual_hdmi` | Native | DLL | Virtual Display、DXGI 捕获、I/P tile 流式传输、App Panel |
-| `app_view_demo` | Native | 无 | 全屏 AppView、BGRA8888 共享画布、LVGL 9.4 副屏渲染 |
+| `app_frame` | Native C++ | 无 | 最小 SDK 接入模板：KavioClient、Session、AppView、LVGL、正常启动与退出 |
+| `sdk_showcase` | Native C++ | DLL + Panel | AppView/LVGL、USB App Channel 速率测试、HDMI RX 单帧预览、HDMI TX 多 Surface/Partial valid_rect、独立 Keyboard/Mouse、H.264 订阅读取并缓存、Schema 配置更新、Runtime Statistics、Host Panel |
 
-第一次接入建议先阅读 `demo_rx_tx`；需要全屏副屏 UI 时参考 `app_view_demo`；需要 Host/Device 双端通信时参考 `demo_communication`；需要自定义 Windows UI 时参考 `demo_panel_image` 或 `demo_metrics_panel`；需要连续图像采集和低延迟 Host/Device 推流时参考 `demo_virtual_hdmi`。
+`sdk_showcase/common/DemoProtocol.h` 只属于该 Demo，用于其 Device Component 和 Host Component 共享业务数据报格式；它不是 Kavio SDK 公共协议。
+
+视频播放暂不纳入该综合 Demo。Python Device SDK 的使用方式见对应 README。

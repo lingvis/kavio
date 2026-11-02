@@ -321,19 +321,28 @@ SDK overview: [`kavio_sdk/README.md`](kavio_sdk/README.md)
 Current configuration contract: [`docs/modules/app/Kavio_App_Configuration_Spec.md`](docs/modules/app/Kavio_App_Configuration_Spec.md).
 Build and packaging guide: [`docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md`](docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md).
 
-## 9. Demo Apps
+## 9. Demo App
 
-Recommended demos by goal:
+The public repository provides two examples with different purposes:
 
-| Goal | Demo |
-| --- | --- |
-| Device lifecycle, RX/TX/Input | `demo_rx_tx` |
-| Bidirectional Host ↔ Device communication | `demo_communication` |
-| App Panel, image transfer, TX integration | `demo_panel_image` |
-| Python Device Component | `demo_metrics_panel` |
-| Windows virtual display and video transport | `demo_virtual_hdmi` |
+- `kavio_app/app_frame`: a minimal native C++ App template, App ID `com.kavio.template.app-frame`, intended to be copied when starting a new App;
+- `kavio_app/sdk_showcase`: the integrated Kavio SDK capability showcase, App ID `com.kavio.demo.sdk-showcase`.
 
-See `kavio_app/README.md` for App-specific documentation.
+The `sdk_showcase` App demonstrates:
+
+- full-screen AppView + LVGL rendering and touch;
+- bidirectional Host ↔ Device USB App Channel communication, configurable 1–1023 KB payloads, integrity checks, and confirmed throughput tests;
+- HDMI RX one-frame read/scaled preview and up to three HDMI TX surfaces, including ~30 Hz movement and a `valid_rect` partial-publish case;
+- separate keyboard and mouse output tests; Keyboard covers A-Z, 0-9, system/navigation/F1-F12 keys, while Mouse maps a touch pad to absolute pointer coordinates and includes click/wheel tests;
+- shared H.264 subscription, SHM packet reads, and raw cache-file capture without playback;
+- Schema-backed configuration read, update, and reset;
+- Runtime Data / Statistics;
+- standard App Configuration;
+- a Windows Host Component and standalone App Panel.
+
+Video playback is intentionally not part of the current public Demo. A future public video playback SDK should define its own contract.
+
+See [`kavio_app/app_frame/README.md`](kavio_app/app_frame/README.md) for the minimal template and [`kavio_app/sdk_showcase/README.md`](kavio_app/sdk_showcase/README.md) for the integrated example.
 
 ## 10. Quick start
 
@@ -346,19 +355,14 @@ cd kavio_sdk/device
 
 Native Apps link the generated CMake package and do not compile SDK private sources directly.
 
-### 10.2 Build a Device demo
+### 10.2 Build the minimal App Frame Device Component
 
 ```bash
-cd kavio_app/demo_rx_tx/device
+cd kavio_app/app_frame/device
 ./build.sh -r
 ```
 
-Python demo:
-
-```bash
-cd kavio_app/demo_metrics_panel/device
-./build.sh
-```
+Build `kavio_app/sdk_showcase/device` when you need the integrated SDK capability example.
 
 ### 10.3 Build a Host Component
 
@@ -371,8 +375,8 @@ Kavio App packages use the `.kap` extension, meaning **Kavio App Package**.
 ```bash
 cd kavio_app
 python3 kavio_app.py list
-python3 kavio_app.py status demo_communication
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py status app_frame
+python3 kavio_app.py package app_frame
 ```
 
 Packages are written to:

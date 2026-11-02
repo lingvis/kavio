@@ -17,8 +17,9 @@ ROOT = Path(__file__).resolve().parent
 TOOLS_DIR = ROOT / "tools"
 PACKAGE_TOOL = TOOLS_DIR / "build_package.py"
 PACKAGE_CONFIG_NAME = "kavio_package.json"
-APP_ICON_WIDTH = 64
-APP_ICON_HEIGHT = 64
+APP_ICON_MAX_WIDTH = 512
+APP_ICON_MAX_HEIGHT = 512
+APP_ICON_MAX_BYTES = 512 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -65,27 +66,21 @@ def joined(root: Path, relative: PurePosixPath) -> Path:
 
 
 def component_entry(output_dir: Path, section: dict[str, object], entry_key: str,
-                    field_prefix: str) -> Path:
-    directory = safe_relative_path(section.get("directory"), f"{field_prefix}.directory")
+                    component_name: str, field_prefix: str) -> Path:
     entry = safe_relative_path(section.get(entry_key), f"{field_prefix}.{entry_key}")
-    return joined(output_dir, directory / entry)
+    return joined(output_dir, PurePosixPath(component_name) / entry)
 
 
-def validate_icon_for_status(package_dir: Path, config: dict[str, object]) -> str:
-    icon = config.get("icon")
-    if icon is None or icon == "":
-        return "icon is required and must reference a 64x64 PNG file"
-    if not isinstance(icon, str):
-        return "icon must be a string"
-    try:
-        path = joined(package_dir, safe_relative_path(icon, "icon"))
-    except ProjectError as exc:
-        return str(exc)
+def validate_icon_for_status(package_dir: Path) -> str:
+    path = package_dir / "icon.png"
     if not path.is_file():
         return f"icon file not found: {path}"
     if path.suffix.lower() != ".png":
         return "icon must be a PNG file"
     try:
+        file_size = path.stat().st_size
+        if file_size > APP_ICON_MAX_BYTES:
+            return f"icon must not exceed {APP_ICON_MAX_BYTES // 1024} KiB; got {file_size} bytes"
         header = path.read_bytes()[:24]
     except OSError as exc:
         return f"cannot read icon: {exc}"
@@ -93,9 +88,9 @@ def validate_icon_for_status(package_dir: Path, config: dict[str, object]) -> st
         return "icon is not a valid PNG file"
     width = int.from_bytes(header[16:20], "big")
     height = int.from_bytes(header[20:24], "big")
-    if width != APP_ICON_WIDTH or height != APP_ICON_HEIGHT:
-        return (f"icon must be exactly {APP_ICON_WIDTH}x{APP_ICON_HEIGHT} pixels; "
-                f"got {width}x{height}")
+    if width == 0 or height == 0 or width > APP_ICON_MAX_WIDTH or height > APP_ICON_MAX_HEIGHT:
+        return (f"icon dimensions must be within 1..{APP_ICON_MAX_WIDTH} x "
+                f"1..{APP_ICON_MAX_HEIGHT} pixels; got {width}x{height}")
     return ""
 
 
@@ -106,18 +101,16 @@ def required_files(package_dir: Path, output_dir: Path,
     device = config.get("device")
     if isinstance(device, dict):
         result.append(("device entry", component_entry(
-            output_dir, device, "entry", "device")))
+            output_dir, device, "entry", "device", "device")))
 
     host = config.get("host")
     if isinstance(host, dict):
         result.append(("host binary", component_entry(
-            output_dir, host, "binary", "host")))
+            output_dir, host, "binary", "host", "host")))
 
     result.append(("schema_description.json", package_dir / "schema_description.json"))
 
-    icon = config.get("icon")
-    if isinstance(icon, str) and icon:
-        result.append(("icon", joined(package_dir, safe_relative_path(icon, "icon"))))
+    result.append(("icon", package_dir / "icon.png"))
     return result
 
 
@@ -215,25 +208,23 @@ def show_status(project_name: str) -> int:
         print(f"INVALID  {'config':20} {config_error}")
         failed = True
 
-    icon_error = validate_icon_for_status(package_dir, config)
+    icon_error = validate_icon_for_status(package_dir)
     if icon_error:
         print(f"INVALID  {'icon':20} {icon_error}")
         failed = True
-    elif isinstance(config.get("icon"), str) and config.get("icon"):
-        print(f"OK       {'icon validation':20} {APP_ICON_WIDTH}x{APP_ICON_HEIGHT} PNG")
+    else:
+        print(f"OK       {'icon validation':20} package/icon.png, PNG <= {APP_ICON_MAX_WIDTH}x{APP_ICON_MAX_HEIGHT}, <= {APP_ICON_MAX_BYTES // 1024} KiB")
     return 2 if failed else 0
 
 
-def copy_component(output_dir: Path, stage_dir: Path, section: dict[str, object],
-                   field_prefix: str) -> None:
-    relative = safe_relative_path(section.get("directory"), f"{field_prefix}.directory")
-    source = joined(output_dir, relative)
+def copy_component(output_dir: Path, stage_dir: Path, component_name: str) -> None:
+    source = output_dir / component_name
     if not source.is_dir():
-        raise ProjectError(f"{field_prefix} output directory not found: {source}")
+        raise ProjectError(f"{component_name} output directory not found: {source}")
     if source.is_symlink():
-        raise ProjectError(f"{field_prefix} output directory must not be a symbolic link: {source}")
-    reject_symlinks(source, f"{field_prefix} output")
-    shutil.copytree(source, joined(stage_dir, relative), dirs_exist_ok=True)
+        raise ProjectError(f"{component_name} output directory must not be a symbolic link: {source}")
+    reject_symlinks(source, f"{component_name} output")
+    shutil.copytree(source, stage_dir / component_name, dirs_exist_ok=True)
 
 
 def build_package(project_name: str, output: Optional[Path]) -> int:
@@ -244,7 +235,7 @@ def build_package(project_name: str, output: Optional[Path]) -> int:
     config_error = validate_config_for_status(package_dir)
     if config_error:
         raise ProjectError("App Configuration validation failed; packaging stopped:\n  " + config_error)
-    icon_error = validate_icon_for_status(package_dir, config)
+    icon_error = validate_icon_for_status(package_dir)
     if icon_error:
         raise ProjectError("Icon validation failed; packaging stopped:\n  " + icon_error)
 
@@ -272,11 +263,11 @@ def build_package(project_name: str, output: Optional[Path]) -> int:
 
         device = config.get("device")
         if isinstance(device, dict):
-            copy_component(output_dir, stage_dir, device, "device")
+            copy_component(output_dir, stage_dir, "device")
 
         host = config.get("host")
         if isinstance(host, dict):
-            copy_component(output_dir, stage_dir, host, "host")
+            copy_component(output_dir, stage_dir, "host")
 
         command = [
             sys.executable,

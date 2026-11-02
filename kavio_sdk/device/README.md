@@ -381,7 +381,7 @@ Python SDK 使用 `get_app_config()`、`update_app_config()` 和
 
 完整 Schema 格式、上位机同步链路参见
 [`Kavio_App_Configuration_Spec.md`](../../docs/modules/app/Kavio_App_Configuration_Spec.md)，
-使用示例参见 [`demo_communication`](../../kavio_app/demo_communication/README.md)。
+使用示例参见 [`sdk_showcase`](../../kavio_app/sdk_showcase/README.md)。
 
 ## 11. Python Device Component
 
@@ -447,11 +447,7 @@ Python SHM 提供 `FrameShm`（RX/TX 双缓冲，使用 Linux `libatomic` 跨进
 
 RX SHM 在收到 `MSG_P2A_NTF_RX_SHM_READY` 时由 SDK 自动打开；TX 和 H.264 SHM 由 App 显式打开。Linux Device 运行环境必须提供 `libatomic.so.1`。Python 3.10 及以上版本适用。
 
-完整 Python App 参考：
-
-```text
-kavio_app/demo_metrics_panel
-```
+当前公开仓库不再维护单独的 Python Demo。Python SDK 的接口、生命周期与打包规则以本章和打包文档为准。
 
 ## 12. SDK 版本
 
@@ -494,13 +490,13 @@ build/sdk_proto_src/
 
 ## 14. 推荐参考 Demo
 
+当前主综合示例：
+
 | 目标 | Demo |
 | --- | --- |
-| RX / TX / Input | `kavio_app/demo_rx_tx` |
-| Host ↔ Device USB Channel | `kavio_app/demo_communication` |
-| 图片、App Panel、TX 联动 | `kavio_app/demo_panel_image` |
-| Python Device Component | `kavio_app/demo_metrics_panel` |
+| AppView/LVGL、USB Channel、HDMI RX/TX、Runtime、Host Panel、App Configuration | `kavio_app/sdk_showcase` |
 
+该 Demo 不包含视频播放。视频能力若未来作为公共 SDK 开放，将使用独立设计，不复用 Platform 私有解码接口。
 
 ## AppView Surface lifecycle contract
 
@@ -511,4 +507,4 @@ build/sdk_proto_src/
 3. `Present()` merges dirty regions, increments the frame sequence, releases the write lock and sends a frame-ready notification. It is asynchronous and is not a VSync fence.
 4. `Close()` releases the App process mapping. The Platform removes the owned Surface when the session closes or the explicit destroy request completes.
 
-The optional `kavio_sdk_lvgl_appview` target is an adapter over this contract. Apps that do not use LVGL link only `kavio_sdk` and draw directly to `AppViewSurface`; video Apps should continue to use the native video/NV12 path rather than routing video frames through LVGL or an extra BGRA canvas. Platform itself still uses LVGL for its built-in UI in this phase.
+The optional exported target `Kavio::DeviceSdkLvgl` is an adapter over this contract. Apps that do not use LVGL link only `Kavio::DeviceSdk` and draw directly to `AppViewSurface`; video Apps should continue to use the native video/NV12 path rather than routing video frames through LVGL or an extra BGRA canvas. Platform itself continues to use LVGL for its built-in UI.

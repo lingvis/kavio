@@ -82,61 +82,7 @@ Device Component（设备组件） 支持两种运行类型：
 
 ---
 
-## 2. 第一版目标（阶段验收记录）
-
-第一版应完成以下闭环：
-
-1. 使用统一应用包安装Device Component（设备组件） 和可选 Host Component（主机组件）。
-2. 支持只包含Device Component（设备组件）、不包含Host Component DLL 的应用包。
-3. 支持原生程序和 Python 程序两种设备运行类型。
-4. 由 AppService 统一负责：
-   - 安装和覆盖更新；
-   - 卸载；
-   - Python 环境创建；
-   - 部署；
-   - 启动、停止和强制结束；
-   - 进程退出监控；
-   - 运行状态查询；
-   - App 与上位机之间通信身份绑定；
-   - 安装、部署和运行诊断日志采集及上报。
-5. 支持Device Component（设备组件） 在 Platform 启动后自动启动一次，但不做异常退出后的守护式保活。
-6. 支持Device Component（设备组件） 和 Host Component（主机组件）分别启动、停止，也支持管理界面的“全部启动”和“全部停止”。
-7. 支持不含Host Component DLL 的 App 由 KavioWin 通用管理窗口启动、停止、查询和配置。
-8. 支持 Python App 使用与 `app_id（应用唯一标识）` 对应的独立虚拟环境。
-9. Python 环境可以通过在线依赖安装创建，也可以从安装包内的离线环境归档恢复。
-10. Python 环境创建失败即视为整个应用安装失败。
-11. 官方签名包在正常模式下安装和运行。
-12. 未签名包只能在对应一侧开启开发模式后安装和运行。
-13. 未签名Host Component DLL 和未签名Device Component（设备组件） 均允许在开发模式下使用。
-14. 关闭某一侧开发模式时，该侧已经安装的未签名代码立即失去运行资格。
-15. 一个Host Component（主机组件）对应一个独立 `KavioAppHost（Kavio 应用宿主）` 进程。
-16. KavioWin 创建一个统一 `Named Pipe（命名管道）` 服务端，每个 Kavio App Host 使用一条独立连接。
-17. 每个Device Component（设备组件） 只能使用与自身 app_id 对应的通信 `Channel（通道）`。
-
----
-
-## 3. 第一版非目标（阶段验收记录）
-
-第一版暂不实现：
-
-- 在线应用商店和自动更新；
-- 外部开发者公钥注册、吊销和完整证书体系；
-- 多版本并存和历史版本回滚；
-- Windows 完整沙箱；
-- App 异常退出后的自动重启；
-- App 与 Host Component（主机组件）的自动关联启动或关联停止；
-- App 到 App 的通用服务发现和跨 App 调用；
-- 高频大数据共享内存通道；
-- 菜单启动界面的具体修改；
-- 配置版本号和差异配置合并；
-- AppService 代替业务 App 保存业务配置；
-- App 子进程的独立 IPC 身份授权；
-- Python 环境作为独立界面状态展示；
-- 未签名应用在正常模式下运行。
-
----
-
-## 4. 核心设计原则
+## 2. 核心设计原则
 
 1. Device Component（设备组件） 是主要业务主体，Host Component（主机组件）是可选辅助组件。
 2. Platform 是Device Component（设备组件） 的唯一安装和进程管理者。
@@ -162,7 +108,7 @@ Device Component（设备组件） 支持两种运行类型：
 
 ---
 
-## 5. 总体架构
+## 3. 总体架构
 
 ```text
 KavioWin（Kavio 上位机）
@@ -229,7 +175,7 @@ KavioWin、Platform 和 Kavio App Host 仅按 `app_id（应用标识）` 路由�
 
 ---
 
-## 5.1 代码仓库目录设计
+### 3.1 代码仓库目录设计
 
 代码仓库必须区分“平台框架”“公共 SDK（软件开发工具包）”和“外部业务项目”三类边界：
 
@@ -254,7 +200,7 @@ project_root/
 
 `kavio_platform` 和 `kavio_win` 可以引用 `kavio_sdk` 的公共状态码、协议和接口定义，但这种引用不改变目录所有权：SDK 是公共契约，不是两个框架的公共杂项目录。只有外部开发者确实需要、且能够形成稳定兼容契约的内容才能进入 SDK。
 
-## 5.2 外部业务项目目录设计
+### 3.2 外部业务项目目录设计
 
 `kavio_app` 以完整 Kavio App 为一级目录边界，并在 App 内部明确区分 Device Component、Host Component、静态打包定义、构建产物和最终发行包：
 
@@ -295,12 +241,12 @@ kavio_app/<project_name>/
 
 - `device/build.sh` 只构建当前项目 Device Component，并将主程序放入 `<project>/output/device/`；
 - `host/*.sln` 只包含当前项目 Host Component；使用 Visual Studio 2015 或更高版本编译后，Post-Build Event 将主入口统一放入 `<project>/output/host/host.dll`；
-- `package/kavio_package.json` 中的 `device.directory` 和 `host.directory` 分别指向最终安装包中的 `device` 和 `host` 目录；
+- Device/Host 构建产物目录固定为 `<project>/output/device/` 与 `<project>/output/host/`，打包后固定进入 `.kap` 的 `device/` 与 `host/` 目录；
 - `kavio_app/kavio_app.py status` 分别检查 `package/` 中的静态文件和 `output/` 中的运行产物；
 - `kavio_app/kavio_app.py package` 使用临时目录合并二者并生成 `<project>/dist/*.kap`；
 - 不允许在 App 目录之外建立另一套平行业务源码树，也不允许维护项目私有 SDK 副本。
 
-## 6. Channel 身份与组件 Endpoint 生命周期解耦
+## 4. Channel 身份与组件 Endpoint 生命周期解耦
 
 业务 Channel 是由 `app_id` 决定的稳定逻辑身份，不属于 Kavio App Host、Device Component 或某一次 USB 会话。Host Component 和 Device Component 是该 Channel 两端当前实际在线的 `Endpoint（端点）`。
 
@@ -315,7 +261,7 @@ kavio_app/<project_name>/
 - 任一组件停止只改变对端可通信状态，不改变 ChannelID；
 - USB 重连只需要重新同步 Endpoint 事实状态，不需要重新分配 ChannelID。
 
-### 6.1 ChannelID 生成与冲突规则
+### 4.1 ChannelID 生成与冲突规则
 
 双端对每个 App 使用完全相同的确定性算法：
 
@@ -332,7 +278,7 @@ app_id
 - 运行时仍保留防御性一致性检查，发现 `ChannelID -> 不同 app_id` 时拒绝绑定并记录严重错误；
 - Host Component 由 KavioWin 的单实例运行时和一次性启动身份保证唯一；Device Component 若异常建立多个受管 IPC 会话，以最后登记的当前会话为有效 Endpoint，旧会话后续退出不得清除新会话状态。
 
-### 6.2 Endpoint 状态同步
+### 4.2 Endpoint 状态同步
 
 SystemChannel 使用独立状态消息同步两端当前业务组件：
 
@@ -351,7 +297,7 @@ Kavio App Host 启停规则：
 - Device Component 的 IPC 会话上线/下线由 Platform 对称发布 Device Endpoint Online/Offline；
 - 无对端 Endpoint 时业务原始数据报不缓存，发送直接返回通信不可用。
 
-### 6.3 USB 断开与恢复
+### 4.3 USB 断开与恢复
 
 USB 断开：
 
@@ -367,7 +313,7 @@ USB 恢复：
 - 对端 Endpoint 状态按 Snapshot 恢复；
 - ChannelID 不重新分配，原组件进程不需要因 USB 重连而重启。
 
-### 6.4 原始数据报契约
+### 4.4 原始数据报契约
 
 应用业务 Channel 只承载不透明原始数据报：
 
@@ -381,7 +327,7 @@ USB 恢复：
 
 ---
 
-## 7. 应用包模型
+## 5. 应用包模型
 
 建议安装包扩展名继续使用：
 
@@ -391,7 +337,7 @@ USB 恢复：
 
 系统内部对象统一称为“应用包”，避免形成“必须包含Host Component（主机组件）”的误解。
 
-### 7.1 必需内容
+### 5.1 必需内容
 
 KavioWin 只扫描和加载包含有效 `manifest.json（应用清单）` 的应用目录。
 
@@ -400,7 +346,7 @@ KavioWin 只扫描和加载包含有效 `manifest.json（应用清单）` 的应
 - Device Component（设备组件） 运行文件；
 - 文件摘要列表。
 
-### 7.2 可选内容
+### 5.2 可选内容
 
 - `signature.json（数字签名）`；
 - 上位机 `host/host.dll`；
@@ -411,7 +357,7 @@ KavioWin 只扫描和加载包含有效 `manifest.json（应用清单）` 的应
 - Python 本地依赖包目录；
 - 其他 App 资源。
 
-### 7.3 包类型
+### 5.3 包类型
 
 #### 双端应用包
 
@@ -440,13 +386,13 @@ device/app 或 device/python_app/
 
 ---
 
-## 8. manifest.json（应用清单）
+## 6. manifest.json（应用清单）
 
-`manifest.json` 不再由打包工具手工拼接。唯一结构定义为 `kavio_sdk/device/proto/app_manifest.proto`，打包工具直接构造 `AppManifestPb` 并通过 protobuf JSON 序列化生成文件。JSON 字段名因此使用 protobuf JSON 默认的 lowerCamelCase（小驼峰）形式，例如 `manifest_version -> manifestVersion`、`app_id -> appId`、`auto_start -> autoStart`。
+`manifest.json` 不再由打包工具手工拼接。唯一结构定义为 `kavio_sdk/device/proto/app_manifest.proto`，打包工具直接构造 `AppManifestPb` 并通过 protobuf JSON 序列化生成文件。JSON 字段名使用 protobuf JSON 默认的 lowerCamelCase（小驼峰）形式，例如 `manifest_version -> manifestVersion`、`app_id -> appId`。
 
 `manifest_version` 当前从 `KavioSdkVersion.h` 的 `KAVIO_MANIFEST_VERSION` 读取，现行值为 `1`。
 
-### 8.1 原生 App 示例
+### 6.1 原生 App 示例
 
 ```json
 {
@@ -455,32 +401,29 @@ device/app 或 device/python_app/
   "version": "1.0.0",
   "name": "Example App",
   "description": "Example device application",
-  "icon": "assets/icon.png",
-
+  "icon": "icon.png",
   "device": {
     "runtime": "native",
     "entry": "device/app",
-    "arguments": [],
-    "autoStart": false
+    "arguments": []
   },
-
   "host": {
     "binary": "host/host.dll",
     "panel": false
   },
-
   "files": []
 }
 ```
 
-没有Host Component（主机组件）时，省略整个 `host` 对象。
+没有 Host Component 时，省略整个 `host` 对象。
 
-`icon（应用图标）` 在当前公开打包工具中必填，必须指向包内有效的 **64×64 PNG** 文件。
+`icon` 由打包工具固定生成成 `icon.png`，来源固定为项目的 `package/icon.png`；PNG 宽高各为 **1～512 像素**，文件大小不超过 **512 KiB**。设备 Launcher 与 Windows Host 按各自界面尺寸缩放源 PNG。
 
-`host` 只声明宿主 DLL 入口和是否提供 Panel，不保存独立 Host Component API 版本，也不声明日志开关。Host Component 不单独做 SDK 版本校验，公开 C ABI 通过 `struct_size` 做结构边界保护。KavioWin 启动任何 Host 应用时都会创建
-`%APPDATA%\Kavio\log\<app_id>` 独立日志目录，并通过 `--log-dir` 传给 KavioAppHost。Host 应用日志不再提供全局启停开关。
+所有 App 都是 UI App，并且始终进入 Launcher。Manifest 不再包含 `ui` 声明，也不存在隐藏 App 的运行时分支。
 
-### 8.2 Python App 示例
+`host` 只声明宿主 DLL 入口和是否提供 Panel，不保存独立 Host Component API 版本。Host Component 不单独做 SDK 版本校验，公开 C ABI 通过 `struct_size` 做结构边界保护。
+
+### 6.2 Python App 示例
 
 ```json
 {
@@ -489,13 +432,11 @@ device/app 或 device/python_app/
   "version": "1.0.0",
   "name": "Python Task",
   "description": "Python device task",
-  "icon": "assets/icon.png",
-
+  "icon": "icon.png",
   "device": {
     "runtime": "python",
-    "entry": "device/python_app/main.py",
+    "entry": "device/main.py",
     "arguments": [],
-    "autoStart": false,
     "python": {
       "pythonVersion": "3.11",
       "installMode": "auto",
@@ -504,14 +445,13 @@ device/app 或 device/python_app/
       "requirements": "device/requirements.txt"
     }
   },
-
   "files": []
 }
 ```
 
 `environment_archive`、`environment_definition` 和 `requirements` 均为可选字段，但 Python App 必须至少提供一种可创建环境的输入。
 
-### 8.3 Python 安装模式
+### 6.3 Python 安装模式
 
 | 值 | 含义 |
 |---|---|
@@ -519,21 +459,22 @@ device/app 或 device/python_app/
 | `online` | 必须根据依赖描述在线创建环境 |
 | `auto` | 有环境归档时优先恢复，否则在线创建 |
 
-### 8.4 auto_start
+### 6.4 auto_start
 
-`device.auto_start` 表示 Platform 启动后，AppService 是否自动启动该 App 一次。
+`auto_start` 不再由 `kavio_package.json` 或 App 包声明。新安装 App 的初始值固定为 `false`。
+
+Platform 仍可保留设备侧的运行期自动启动设置能力；如果用户通过设备管理界面修改，该值属于设备运行设置，不属于 App 包元数据，也不写入全局 AppRegistry。
 
 规则：
 
-- 该值是安装清单提供的初始默认值；
-- 用户可以在管理窗口修改；
-- AppRegistry 保存当前用户设置；
-- 覆盖更新默认保留用户已经修改过的设置；
+- 安装包不能要求自动启动；
+- 新安装 App 默认不自动启动；
+- 运行期覆盖值由设备单独持久化；
+- AppRegistry 只保存完整、有序的 App ID 列表和注册表版本；
 - App 异常退出后不自动拉起；
-- USB 是否在线不影响 auto_start；
-- Host Component（主机组件）是否运行不影响 auto_start。
+- USB 或 Host Component 在线状态不改变设备侧自动启动设置语义。
 
-### 8.5 不允许由清单声明的字段
+### 6.5 不允许由清单声明的字段
 
 以下内容只能由 Platform、KavioWin 或安装来源决定：
 
@@ -550,9 +491,9 @@ device/app 或 device/python_app/
 
 ---
 
-## 9. 生命周期设计
+## 7. 生命周期设计
 
-### 9.1 App 生命周期
+### 7.1 App 生命周期
 
 Device Component（设备组件） 支持：
 
@@ -571,7 +512,7 @@ Device Component（设备组件） 支持：
 - Kavio App Host 异常退出；
 - KavioWin 退出。
 
-### 9.2 Host Component（主机组件）生命周期
+### 7.2 Host Component（主机组件）生命周期
 
 Host Component（主机组件）支持：
 
@@ -583,7 +524,7 @@ Host Component（主机组件）支持：
 
 Host Component（主机组件）启停不改变Device Component（设备组件） 运行状态。
 
-### 9.3 组合操作
+### 7.3 组合操作
 
 应用管理窗口可提供：
 
@@ -598,20 +539,24 @@ Host Component（主机组件）启停不改变Device Component（设备组件�
 
 “全部停止”只是依次停止两个独立运行单元，不改变未来的独立启动规则。
 
-### 9.4 Platform 启动顺序
+### 7.4 Platform 启动顺序
 
 ```text
 Platform 基础组件启动
 → IPCServer 启动
-→ AppService 加载 AppRegistry
-→ AppService 检查设备开发模式和信任状态
+→ AppService 加载并校验 AppRegistry；必要时从有效备份恢复
+→ AppService 扫描 App 根目录，将目录名符合 App ID 规则但尚未登记的目录追加到 AppRegistry 末尾
+→ AppService 保留 AppRegistry 中已登记但当前目录缺失的 App ID，不自动删除
+→ AppService 按需读取各 App 自身元信息并检查运行资格
 → AppService 对具备运行资格的 auto_start App 启动一次
 → USB 服务启动
 ```
 
+本地扫描只要求目录名符合 App ID 命名规则。即使目录为空、Manifest 缺失或元信息损坏，也作为一个已发现的 App 追加到 AppRegistry；这类 App 不能启动，界面使用 App ID 和默认图标展示，并允许 Host 执行卸载/清理。
+
 自动启动不依赖 USB 和 Host Component（主机组件）。
 
-### 9.5 Platform 停止顺序
+### 7.5 Platform 停止顺序
 
 ```text
 AppService 停止全部Device Component（设备组件）
@@ -623,32 +568,35 @@ AppService 停止全部Device Component（设备组件）
 
 ---
 
-## 10. 状态模型
+## 8. 状态模型
 
-### 10.1 安装状态
+### 8.1 安装事务状态
+
+安装过程可以在当前安装会话中使用以下瞬时阶段状态：
 
 ```text
-未安装
 接收安装包
 校验安装包
 创建 Python 环境
 部署文件
-注册应用
-已安装
+提交安装
+安装完成
 安装失败
-文件损坏
-签名无效
-开发模式未开启
-依赖环境创建失败
 ```
 
-Python 环境不单独展示状态。环境创建属于安装过程：
+这些状态用于当前安装操作的进度、日志和错误反馈，**不作为 AppRegistry 持久化记录，也不因为取得了 app_id 就提前出现在正式 App 列表中**。
 
-- 环境成功创建后，应用才进入“已安装”；
-- 环境创建失败，应用直接进入“安装失败”；
-- 启动时发现环境缺失或损坏，应用状态转为“文件损坏”或“安装无效”。
+规则：
 
-### 10.2 Device Component（设备组件） 状态
+- 只有完整安装事务成功提交后，App ID 才进入 AppRegistry；
+- 安装失败必须清理安装临时目录、未提交的新运行目录、临时 Python 环境及其他本次安装产生的残留，不保留失败 App 的注册记录；
+- 覆盖更新失败时，如果旧版本尚未被正式替换，则继续保留旧版本和原有 AppRegistry 位置；不得把原有正常 App 改写成一个持久化“安装失败”条目；
+- Platform 启动时通过本地目录扫描发现的合法 App ID 目录视为已安装，即使目录为空或元信息损坏也加入 AppRegistry；其可运行性由后续元信息和运行前检查决定；
+- AppRegistry 中已有但对应目录缺失的 App ID 继续保留，用于设备与 Host 展示和清理，不自动删除。
+
+Python 环境不单独作为持久化 App 状态。环境创建属于安装事务；创建失败时当前安装事务失败并执行上述清理。
+
+### 8.2 Device Component（设备组件） 状态
 
 ```text
 不存在
@@ -661,7 +609,7 @@ Python 环境不单独展示状态。环境创建属于安装过程：
 开发模式关闭，禁止运行
 ```
 
-### 10.3 Host Component（主机组件）状态
+### 8.3 Host Component（主机组件）状态
 
 ```text
 无上位机组件
@@ -674,7 +622,7 @@ Python 环境不单独展示状态。环境创建属于安装过程：
 开发模式关闭，禁止运行
 ```
 
-### 10.4 通信状态
+### 8.4 通信状态
 
 ```text
 USB 离线
@@ -684,7 +632,7 @@ Channel 可用
 
 通信状态独立于Device Component（设备组件） 和 Host Component（主机组件）运行状态。
 
-### 10.5 信任状态
+### 8.5 信任状态
 
 ```text
 Kavio 官方签名
@@ -692,7 +640,7 @@ Kavio 官方签名
 签名无效
 ```
 
-### 10.6 运行授权状态
+### 8.6 运行授权状态
 
 ```text
 允许运行
@@ -702,7 +650,7 @@ Kavio 官方签名
 开发模式已关闭，运行被阻止
 ```
 
-### 10.7 界面展示示例
+### 8.7 界面展示示例
 
 ```text
 Device Component（设备组件）：运行中
@@ -724,9 +672,9 @@ Host Component（主机组件）：已停止
 
 ---
 
-## 11. App 启动身份与 IPC 安全绑定
+## 9. App 启动身份与 IPC 安全绑定
 
-### 11.1 身份类型
+### 9.1 身份类型
 
 #### app_id
 
@@ -740,7 +688,7 @@ Host Component（主机组件）：已停止
 
 由 Linux 内核分配，是本地 IPC 权限验证依据。
 
-### 11.2 SO_PEERCRED（套接字对端凭据）
+### 9.2 SO_PEERCRED（套接字对端凭据）
 
 Device Component（设备组件） 连接 Unix Domain Socket（Unix 域套接字）后，IPCServer 使用：
 
@@ -762,7 +710,7 @@ getsockopt(fd, SOL_SOCKET, SO_PEERCRED, ...)
 
 客户端请求中的 `client_pid` 只用于日志，不参与权限判断。
 
-### 11.3 Channel 隔离
+### 9.3 Channel 隔离
 
 App SDK 不允许传入任意 channel_id，接口为：
 
@@ -776,11 +724,11 @@ ChannelID 不随 USB 重连或组件重启变化。SDK 可以只读查询自己�
 
 Host 向 Device Component（设备组件）返回业务数据时，Platform 根据 USB 帧中的 `channel_id` 查找该 App 当前有效的本地 IPC 会话。`session_id` 仅用于 Platform 内部确认当前会话和过滤旧会话退出事件，不跨 USB 传输。目标 App 不在线、ChannelID 与 `app_id` 计算结果不一致或对端状态异常时均拒绝投递。
 
-### 11.4 广播
+### 9.4 广播
 
 广播只预留为未来 Platform 向Device Component（设备组件） 的系统广播能力。
 
-第一版：
+当前实现：
 
 - 不支持 App 向其他 App 广播；
 - 不支持上位机业务应用向所有 App 广播；
@@ -788,9 +736,9 @@ Host 向 Device Component（设备组件）返回业务数据时，Platform 根�
 
 ---
 
-## 12. 配置系统
+## 10. 配置系统
 
-### 12.1 配置所有权
+### 10.1 配置所有权
 
 > **业务配置由 Device SDK 统一读取、校验和原子持久化；Device Component 负责把生效值应用到业务逻辑。AppService 不持久化业务配置。**
 
@@ -801,7 +749,7 @@ Platform 只承担 SystemChannel 到受管 App IPC 会话的可信路由：
 - 不以安装包默认值冒充设备当前配置；
 - 根据真实进程 PID 对应的 `app_id` 校验响应身份。
 
-### 12.2 Config Definition 与 App Panel
+### 10.2 Config Definition 与 App Panel
 
 Config Definition 和 App Panel 是两个独立的可选能力，不再使用 `none/native/config/hybrid` 配置模式组合。
 
@@ -817,13 +765,13 @@ Config Definition 和 App Panel 是两个独立的可选能力，不再使用 `n
 - App Panel 不读取或修改 App Configuration，除非业务项目自行通过 Host Component / Device Component 协议实现相应功能；
 - 没有 Host Component 的应用包不能提供 App Panel，但仍可单独提供 Config Definition。
 
-### 12.3 Config Definition 约束
+### 10.3 Config Definition 约束
 
 Config Definition 必须提供配置项 `key`、配置名称 `name`、配置类别 `category`、配置说明 `description` 和配置类型 `type`。当前支持 `boolean`、`integer`、`number`、`string`、`enum`。
 
 完整现行规范见：[`Kavio_App_Configuration_Spec.md`](Kavio_App_Configuration_Spec.md)。Config Definition 每个字段必须提供 `value` 作为包内初始值。
 
-### 12.4 App Configuration通信协议
+### 10.4 App Configuration通信协议
 
 App Configuration仅由 KavioWin 通用配置界面、SystemChannel、Platform 和Device Component（设备组件） 参与。Kavio App Host 和 Host Component 不接收 App Configuration、不提交 App Configuration，也不能通过宿主接口读取或修改 App Configuration。固定链路为：
 
@@ -840,7 +788,7 @@ SystemChannel GET 使用字段号 340，SET 使用字段号 341；App IPC 使用
 
 App Panel 不使用上述 App Configuration 配置链路。面板如需读取或修改Device Component（设备组件） 的业务数据，应通过 Host Component 与Device Component（设备组件） 自行定义的原始数据报协议完成，Kavio 框架不解析该协议。
 
-### 12.5 配置读取流程
+### 10.5 配置读取流程
 
 1. KavioWin 选择应用并发送 GET，请求体不携带配置；
 2. Platform 将请求定向发送到相同 `app_id` 的运行中 App；
@@ -848,7 +796,7 @@ App Panel 不使用上述 App Configuration 配置链路。面板如需读取或
 4. Device SDK 返回 Schema 与完整配置 JSON；
 5. KavioWin 按 Config Definition 再次校验并更新可视化控件。
 
-### 12.6 配置保存流程
+### 10.6 配置保存流程
 
 1. KavioWin 从动态控件生成并校验完整配置 JSON；
 2. 通过 SystemChannel 发送 SET；
@@ -868,7 +816,7 @@ App Panel 不使用上述 App Configuration 配置链路。面板如需读取或
 - 15 秒未响应返回超时；
 - App 未运行时读取和保存不可用。
 
-### 12.7 Config Definition 初始化与配置恢复
+### 10.7 Config Definition 初始化与配置恢复
 
 打包工具要求同级 `schema_description.json` 文件必须存在，且仅 `{}` 表示无配置；
 非空内容必须通过 Config Definition v2.0 校验。Manifest 不再包含 SchemaConfig 字段。
@@ -878,9 +826,9 @@ Device SDK 使用 JsonCpp 解析 Schema，首次运行自动创建 `config.json`
 SDK 自动处理 Host GET/SET 和持久化，成功 SET 经 OnMessage 通知 App；上位机通过 GET 主动获取 Schema/当前配置，经
 IPC → Platform SystemChannel 发送给上位机。Platform 不解析业务 JSON。
 
-## 13. Python 运行环境设计
+## 11. Python 运行环境设计
 
-### 13.1 总体方案
+### 11.1 总体方案
 
 设备镜像预装 `Miniforge（精简 Conda 发行版）`，并保证 `conda` 已加入 Platform 进程的 `PATH（环境变量搜索路径）`。AppService 直接执行 `conda`，不保存或拼接 Miniforge 绝对路径。
 
@@ -904,7 +852,7 @@ conda                                               # 通过 PATH 直接解析�
 
 app_id 必须经过严格格式校验，禁止路径分隔符和目录穿越字符。
 
-### 13.2 环境创建方式
+### 11.2 环境创建方式
 
 #### 方式 A：完整离线环境归档
 
@@ -958,7 +906,7 @@ python -m pip install --no-input -r requirements.txt
 3. 软件源使用 Platform 配置的 `pip_index_url`；
 4. 验证解释器和主脚本。
 
-### 13.3 auto 模式
+### 11.3 auto 模式
 
 `install_mode=auto` 时：
 
@@ -967,7 +915,7 @@ python -m pip install --no-input -r requirements.txt
 3. 否则有 requirements.txt 则在线创建；
 4. 都没有则安装失败。
 
-### 13.4 安装事务
+### 11.4 安装事务
 
 Python 环境创建必须在临时目录执行：
 
@@ -991,7 +939,7 @@ Python 环境创建必须在临时目录执行：
 - 不允许启动；
 - 不单独保留“Python 环境失败但应用已安装”的状态。
 
-### 13.5 在线安装异步化
+### 11.5 在线安装异步化
 
 在线依赖安装可能持续较长时间，不能阻塞 USB 接收线程。
 
@@ -1004,7 +952,7 @@ Python 环境创建必须在临时目录执行：
 5. KavioWin 通过状态事件或轮询 Query 获取结果；
 6. 最终成功后进入“已安装”，失败则进入“安装失败”。
 
-### 13.6 依赖源配置
+### 11.6 依赖源配置
 
 应用包可以声明依赖，不能任意覆盖系统软件源安全策略。
 
@@ -1016,7 +964,7 @@ repeated string conda_channels = 2;
 string pip_index_url = 3;
 ```
 
-### 13.7 环境审计
+### 11.7 环境审计
 
 在线环境创建成功后，AppService 保存审计信息：
 
@@ -1028,7 +976,7 @@ string pip_index_url = 3;
 
 这些信息用于排查和复现，不作为单独运行状态展示。
 
-### 13.8 Python 启动方式
+### 11.8 Python 启动方式
 
 AppService 使用参数数组直接执行：
 
@@ -1040,13 +988,13 @@ AppService 使用参数数组直接执行：
 
 必须使用 `execve（执行程序）`，不能通过 shell 拼接命令。
 
-原生 App 和 Python App 都使用 `AppServiceConfigPb.run_user` 指定用户运行，第一版默认 `vs680`。
+原生 App 和 Python App 都使用 `AppServiceConfigPb.run_user` 指定用户运行，当前默认 `vs680`。
 
 ---
 
-## 14. 签名、开发模式与运行授权
+## 12. 签名、开发模式与运行授权
 
-### 14.1 正常信任路径
+### 12.1 正常信任路径
 
 官方应用包使用：
 
@@ -1056,7 +1004,7 @@ AppService 使用参数数组直接执行：
 
 官方签名有效的包在正常模式下可以安装和运行。
 
-### 14.2 信任状态分类
+### 12.2 信任状态分类
 
 | 状态 | 处理 |
 |---|---|
@@ -1068,7 +1016,7 @@ AppService 使用参数数组直接执行：
 
 用户自行编写的程序应不携带伪造的官方签名声明，按未签名开发包安装。
 
-### 14.3 双端开发模式
+### 12.3 双端开发模式
 
 系统增加两个相互独立的开发模式：
 
@@ -1090,7 +1038,7 @@ AppService 使用参数数组直接执行：
 - 关闭后，已经安装的未签名 App 保留文件和数据，但禁止再次启动；
 - 未签名 auto_start App 在设备开发模式关闭时不得自动启动。
 
-### 14.4 不同应用包的开发模式要求
+### 12.4 不同应用包的开发模式要求
 
 | 应用包内容 | 未签名时的要求 |
 |---|---|
@@ -1100,7 +1048,7 @@ AppService 使用参数数组直接执行：
 
 应用包是一个安装事务。双端未签名包如果只有一侧开发模式开启，则整个安装失败，不做部分安装。
 
-### 14.5 安装时风险确认
+### 12.5 安装时风险确认
 
 开发模式只是允许进入未签名流程，不能代替用户确认。
 
@@ -1118,7 +1066,7 @@ AppService 使用参数数组直接执行：
 
 用户必须执行明确确认后才提交安装。
 
-### 14.6 Platform 和 KavioWin 的双重强制检查
+### 12.6 Platform 和 KavioWin 的双重强制检查
 
 未签名Device Component（设备组件）：
 
@@ -1140,7 +1088,7 @@ KavioWin 风险确认
 
 安装请求中的“用户已确认”标志不能替代开发模式。
 
-### 14.7 开发模式关闭时的处理
+### 12.7 开发模式关闭时的处理
 
 关闭上位机开发模式：
 
@@ -1159,7 +1107,7 @@ KavioWin 风险确认
 
 重新开启开发模式后，未签名组件重新获得手动启动和 auto_start 资格，但不会因为模式切换自动立即启动。
 
-### 14.8 管理界面提示
+### 12.8 管理界面提示
 
 开发模式打开时，KavioWin 顶部持续显示明显提示：
 
@@ -1178,27 +1126,30 @@ KavioWin 风险确认
 
 ---
 
-## 15. 安装和覆盖更新
+## 13. 安装和覆盖更新
 
-### 15.1 通用流程
+### 13.1 通用流程
 
 1. KavioWin 解析应用包并进行本地检查；
 2. 对官方包进行签名校验；
 3. 对未签名包检查相关开发模式并显示风险确认；
-4. 停止目标Device Component（设备组件）；
-5. 如果存在Host Component（主机组件），停止对应 Kavio App Host；
+4. 停止目标 Device Component（设备组件）；
+5. 如果存在 Host Component（主机组件），停止对应 Kavio App Host；
 6. Platform 创建安装会话和临时目录；
 7. 分片传输设备文件；
 8. AppService 记录并上报接收和校验日志；
 9. 校验文件大小、摘要和清单；
 10. 设备端再次执行签名或开发模式检查；
 11. 原生 App 设置权限；Python App 创建独立虚拟环境；
-12. 部署完成后原子切换正式运行目录；
-13. 写入 AppRegistry；
-14. 安装上位机组件；
-15. 双端均成功后，应用包状态进入“已安装”。
+12. 准备设备端新版本并完成必要校验，但在整个安装事务提交前不创建新的 AppRegistry 条目；
+13. 安装并校验 Host Component（主机组件）（如果存在）；
+14. 双端均满足提交条件后，原子切换正式运行目录；
+15. 原子更新 AppRegistry：新安装追加 App ID，覆盖安装保持原有顺序；
+16. 安装事务进入“安装完成”。
 
-### 15.2 未签名双端包
+安装中和安装失败都不进入 AppRegistry。任一步骤失败时必须执行安装事务清理；新安装不得在正式 App 列表中留下失败条目。覆盖更新则优先保持原有可用版本和原有 AppRegistry 顺序。
+
+### 13.2 未签名双端包
 
 未签名双端包安装前必须满足：
 
@@ -1210,49 +1161,51 @@ device_developer_mode=true
 
 任一条件不满足，整个安装事务失败。
 
-### 15.3 不支持历史回滚
+### 13.3 不支持历史回滚
 
-第一版：
+当前实现：
 
-- 不保留历史版本；
-- 不提供版本回滚按钮；
-- 更新失败后状态为“安装失败”；
-- 用户通过再次覆盖安装修复。
+- 不提供面向用户的历史版本选择和回滚按钮；
+- 新安装失败时，不产生 AppRegistry 记录，清理本次安装残留；
+- 覆盖更新在正式提交前失败时，继续保留原有版本和原有 AppRegistry 位置；
+- 用户可通过再次覆盖安装修复。
 
-仍使用临时目录和原子替换，目的是避免产生半文件，不代表提供版本回滚能力。
+仍使用临时目录和原子切换，目的是避免产生半文件；这属于安装事务一致性，不代表向用户提供多版本回滚能力。
 
-### 15.4 安装失败清理
+### 13.4 安装失败清理
 
-必须清理：
+必须清理本次安装产生且尚未提交的内容：
 
 - 安装临时目录；
 - Python 临时环境；
 - 未完成的安装会话；
-- 未正式注册的 AppRecord；
+- 未提交的新运行目录或临时部署文件；
 - 临时 DLL 文件；
 - 临时签名和摘要缓存。
 
-保留失败日志，供 KavioWin 查询。
+安装失败只保留操作日志用于当次诊断，不在 AppRegistry 或正式 App 列表中创建失败记录。
 
-### 15.5 卸载
+覆盖更新失败时不得误删原有 AppRegistry 记录；如果旧版本仍处于正式运行目录，则继续作为当前已安装版本。
+
+### 13.5 卸载
 
 卸载流程：
 
-1. 停止Device Component（设备组件）；
-2. 停止Host Component（主机组件）；
-3. 删除设备运行目录；
-4. 删除 Python 环境；
+1. 如果 Device Component（设备组件）存在并正在运行，先停止；
+2. 如果 Host Component（主机组件）存在并正在运行，先停止；
+3. 删除实际存在的设备运行目录和安装残留；
+4. 删除实际存在的 Python 环境；
 5. 默认保留或删除 App 数据目录由用户选择；
-6. 删除 AppRegistry 记录；
-7. 删除上位机组件。
+6. 清理实际存在的上位机组件；
+7. 最后原子地从 AppRegistry 删除对应 App ID。
+
+卸载必须是幂等操作。AppRegistry 中的 App 即使设备目录已经缺失、目录为空、Manifest 损坏或元信息无法读取，也必须允许 Host 发起卸载；不存在的文件按“已清理”处理，最终仍可删除 AppRegistry 记录。
 
 系统内置 App 不允许通过普通卸载接口删除。
 
----
+## 14. AppService 设计
 
-## 16. AppService 设计
-
-### 16.1 核心职责
+### 14.1 核心职责
 
 AppService 负责：
 
@@ -1280,7 +1233,7 @@ AppService 不负责：
 - 控制Host Component（主机组件）生命周期；
 - 保存、查询或上报Device Component（设备组件） 的 stdout/stderr。
 
-### 16.2 AppServiceConfigPb
+### 14.2 AppServiceConfigPb
 
 建议：
 
@@ -1312,7 +1265,7 @@ allow_online_python_install   = true
 
 字段 `developer_mode` 表示设备开发模式。上位机开发模式不放入该配置，由 KavioWin 本地管理。
 
-### 16.3 进程监控记录
+### 14.3 进程监控记录
 
 记录：
 
@@ -1330,9 +1283,9 @@ allow_online_python_install   = true
 
 ---
 
-## 17. Host Component（主机组件）设计
+## 15. Host Component（主机组件）设计
 
-### 17.1 可选组件
+### 15.1 可选组件
 
 `host` 对象不存在时：
 
@@ -1342,11 +1295,11 @@ allow_online_python_install   = true
 - 仍可管理Device Component（设备组件）；
 - 如果有 Config Definition，仍可通过 SystemChannel 配置运行中的 App，不依赖业务 Channel。
 
-### 17.2 Kavio App Host 隔离
+### 15.2 Kavio App Host 隔离
 
 一个应用对应一个 Kavio App Host。
 
-第一版：
+当前实现：
 
 - `Kavio App Host（应用宿主）` 使用当前 Windows 用户上下文正常启动；
 - 不继承 KavioWin 句柄；
@@ -1354,7 +1307,7 @@ allow_online_python_install   = true
 - 应用安装目录只读；
 - 应用数据目录可读写。
 
-### 17.3 统一 Named Pipe
+### 15.3 统一 Named Pipe
 
 KavioWin 创建统一服务端，例如：
 
@@ -1368,7 +1321,7 @@ KavioWin 创建统一服务端，例如：
 
 连接通过 app_id、instance_id、一次性 launch_token 和宿主 PID 绑定身份。业务接口不允许应用指定其他 app_id。
 
-### 17.4 Host Component 接口
+### 15.4 Host Component 接口
 
 第三方 Host Component 只包含 `KavioHost.h（Kavio 应用接口头文件）`。应用不依赖 KavioWin、LibUtils、命名管道、SDK 版本头、USB 协议、SystemChannel 协议或任何内部消息编号。
 
@@ -1397,13 +1350,12 @@ send
 is_device_online
 get_channel_id
 restart
-log
 get_data_path
 ```
 
 接口不提供 App Configuration 读取、提交或变更通知能力。Host Component 与Device Component（设备组件） 的消息格式完全由第三方定义。
 
-### 17.5 Kavio App Host 内部通信
+### 15.5 Kavio App Host 内部通信
 
 KavioWin 与 Kavio App Host 之间的命名管道协议只区分握手、生命周期控制、宿主状态、日志、重启请求、Channel 状态和 Channel 数据。`ChannelData（通道数据）` 的负载是不透明原始数据报，Kavio App Host 和 KavioWin 均不解析其内部结构。
 
@@ -1414,7 +1366,7 @@ Kavio App Host 使用独立的有界发送队列和应用回调队列：
 - 停止时先关闭新业务入口，调用 PrepareStop，再停止回调分发，最后按 Stop、Destroy 顺序释放应用；
 - 队列达到数量或字节上限时拒绝新数据，不允许无界增长。
 
-### 17.6 辅助能力
+### 15.6 辅助能力
 
 Host Component（主机组件）可以为Device Component（设备组件） 提供：
 
@@ -1426,7 +1378,7 @@ Host Component（主机组件）可以为Device Component（设备组件） 提�
 
 这些能力是否可用只影响业务功能，不影响Device Component（设备组件） 生命周期。
 
-### 17.7 上位机开发模式检查
+### 15.7 上位机开发模式检查
 
 HostComponentRuntimeService 在以下阶段检查 host_developer_mode：
 
@@ -1439,11 +1391,11 @@ HostComponentRuntimeService 在以下阶段检查 host_developer_mode：
 
 ---
 
-## 18. 内置 App 与用户 App
+## 16. 内置 App 与用户 App
 
 MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App，不进入本章的安装、扫描、签名、运行和 IPC 模型。内置服务使用 `kavio.builtin.*` 保留 Channel，并由 SystemChannel 控制面管理。
 
-### 18.1 区分方式
+### 16.1 区分方式
 
 ```text
 /home/vs680/kavio/apps/<app_id>       → Builtin（系统内置，Package Root）
@@ -1454,14 +1406,14 @@ MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App�
 
 来源由扫描目录和安装流程决定，不由 manifest 声明。
 
-### 18.2 信任规则
+### 16.2 信任规则
 
 - 固件镜像内置 App 由固件发布链信任；
 - 内置 App 不依赖设备开发模式；
 - 用户安装的官方签名 App 不依赖设备开发模式；
 - 用户安装的未签名 App 必须依赖设备开发模式。
 
-### 18.3 同名规则
+### 16.3 同名规则
 
 如果内置目录和用户目录存在相同 app_id：
 
@@ -1470,7 +1422,7 @@ MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App�
 - 安装服务拒绝安装同名用户 App；
 - 返回明确错误。
 
-### 18.4 Platform 核心边界
+### 16.4 Platform 核心边界
 
 必须留在 Platform 内部：
 
@@ -1491,41 +1443,59 @@ MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App�
 
 ---
 
-## 19. KavioWin 管理窗口
+## 17. KavioWin 管理窗口
 
-### 19.1 应用条目展示
+### 17.1 应用条目展示
 
-应用列表第一列直接显示清单声明的 PNG 图标，`App ID` 后紧跟安装状态列；安装任务从取得有效 `app_id` 后即进入列表，状态至少区分“安装中”“安装失败”“已安装”。安装失败条目保留到用户执行卸载/清理；有部分组件时清理已存在组件，没有任何已安装部分时直接删除条目。
+设备 AppRegistry 是设备端和 KavioWin 的**唯一权威 App 列表与显示顺序来源**。AppRegistry 只保存有序 App ID，不复制名称、版本、描述、图标、运行类型等元信息；这些信息始终从 App 自身读取。
 
-每个应用条目展示：
+正式列表包含：
 
-- PNG 图标、App ID、安装状态、版本和描述；
+- 已完成安装事务并成功提交的 App；
+- Platform 启动或刷新时，在 App 根目录扫描到的、目录名符合 App ID 规则的新目录；
+- AppRegistry 中已有但当前设备目录缺失的 App ID。
+
+安装中和安装失败不进入正式列表。安装失败直接清理本次安装残留。
+
+本地扫描只依据目录名是否满足 App ID 规则决定是否登记。即使目录为空、Manifest 不存在或内部文件已损坏，也将其作为已发现 App 追加到 AppRegistry 末尾。这样可以让设备和 Host 对损坏目录保持可见并进行清理。
+
+显示规则：
+
+- 元信息读取正常：显示 App 自身的名称、版本、描述和 PNG 图标；
+- 名称读取失败：使用 App ID 作为显示名称；
+- 图标不存在或无法解码：使用平台默认图标；
+- App 目录缺失、目录为空或关键元信息损坏：标记为不可运行，但继续保留原有列表位置，并允许 Host 卸载；
+- 新扫描到且尚未登记的 App 统一追加到列表末尾，不改变已有 App 顺序；
+- KavioWin 必须严格使用设备返回的 AppRegistry 顺序，不得再按 App ID、名称、版本或其他字段自行排序。
+
+正常条目可以展示：
+
+- PNG 图标、名称、App ID、版本和描述；
 - 运行类型：原生或 Python；
-- Device Component（设备组件） 状态；
+- Device Component（设备组件）状态；
 - Host Component（主机组件）状态；
 - USB 和 Channel 状态；
 - auto_start；
-- 信任状态；
-- 运行授权状态；
-- 是否需要在线安装依赖；
-- 最近安装阶段；
-- 最后错误。
+- 信任状态和运行授权状态；
+- 最近操作错误。
+
+损坏或缺失 App 只要求至少能够展示 App ID、默认图标、不可运行状态和卸载入口，不要求伪造缺失的元信息。
 
 不展示独立的 Python 环境状态。
 
-### 19.2 操作按钮
+### 17.2 操作按钮
 
 | 条件 | 操作 |
 |---|---|
-| 纯Device Component（设备组件） | 启动 App、停止 App、配置、卸载 |
-| 含Host Component（主机组件） | 启动 App、停止 App、启动应用、停止应用、全部启动、全部停止、配置、卸载 |
+| 纯 Device Component（设备组件） | 启动 App、停止 App、配置、卸载 |
+| 含 Host Component（主机组件） | 启动 App、停止 App、启动 Host、停止 Host、全部启动、全部停止、配置、卸载 |
 | 无配置 | 不显示配置入口 |
 | App 未运行或 SystemChannel 不可用 | 配置入口禁用或提示先启动并连接设备 |
 | 签名未验证 | 持续显示风险标记和运行授权条件 |
-| 安装失败 | 允许重新覆盖安装，不允许启动 |
+| 目录缺失、空目录、Manifest/元信息损坏 | 不允许启动；使用 App ID + 默认图标展示；允许卸载/清理 |
 | 开发模式关闭 | 未签名对应组件的启动按钮禁用 |
 
-### 19.3 开发模式设置
+### 17.3 开发模式设置
 
 设置页面提供两个独立开关：
 
@@ -1538,9 +1508,9 @@ MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App�
 
 关闭开发模式前，界面提示将停止对应一侧所有正在运行的未签名代码。
 
-## 20. 协议定义
+## 18. 协议定义
 
-### 20.1 usb_protocol.proto
+### 18.1 usb_protocol.proto
 
 USB SystemChannel 使用 `ReqPackagePb` 承载请求，使用 `RspPackagePb` 承载应答。应答包统一包含：
 
@@ -1589,7 +1559,7 @@ SystemChannel 请求和应答覆盖：
 
 AppService 不保存 Config Definition 业务配置；App Configuration通过 USB SystemChannel 路由到目标Device Component（设备组件），由Device Component（设备组件） 校验、应用和持久化。
 
-### 20.2 ipc.proto
+### 18.2 ipc.proto
 
 `MSG_A2P_DATA_COMM_CHANNEL`（App → Platform）与 `MSG_P2A_DATA_COMM_CHANNEL`（Platform → App）分别承载业务数据。IPC 协议定义：
 
@@ -1599,36 +1569,42 @@ AppService 不保存 Config Definition 业务配置；App Configuration通过 US
 - App 受控重启请求；
 - SDK 自动读取、保存配置并发送响应，只有成功的 SET 通过统一 `OnMessage()` 通知 App。
 
-## 21. 建议数据结构
+## 19. 建议数据结构
 
-### 21.1 AppRecord
+### 19.1 AppRegistry 与运行时 AppRecord
+
+AppRegistry 的持久化结构必须保持最小化，只负责**完整 App ID 集合、顺序和注册表版本**：
+
+```cpp
+struct AppRegistryState {
+    uint32_t schema_version;
+    uint64_t revision;
+    std::vector<std::string> app_ids;  // 数组顺序即设备与 Host 的权威显示顺序
+};
+```
+
+AppRegistry 不保存名称、版本、描述、图标、runtime、auto_start、entry、arguments、trust、Python 环境路径或业务配置。这些元信息从 App 自身读取；无法读取时保留 App ID 并按损坏 App 降级展示。
+
+AppService 可以在内存中维护运行时 `AppRecord`，但它不是 AppRegistry 的持久化格式：
 
 ```cpp
 struct AppRecord {
     std::string app_id;
-    std::string version;
-    std::string bundle_hash;
 
+    // 从 App 自身元信息解析，失败时允许为空。
+    std::string version;
     AppOrigin origin;
     AppRuntime runtime;
     AppTrustLevel trust_level;
-
     bool auto_start;
     bool has_host_app;
-    bool auto_start_attempted;
-
-    std::string runtime_root;
-    std::string data_root;
     std::string entry_path;
     std::vector<std::string> arguments;
-
     std::string python_env_path;
-    PythonInstallMode python_install_mode;
 
-    AppInstallState install_state;
+    // 当前运行时状态，不作为 AppRegistry 持久化数据。
     AppRuntimeState runtime_state;
     AppRunAuthorization run_authorization;
-
     uint64_t runtime_instance_id;
     pid_t pid;
     int last_exit_code;
@@ -1638,7 +1614,9 @@ struct AppRecord {
 };
 ```
 
-### 21.2 枚举
+对于仅从合法目录名扫描得到但内部为空/损坏的 App，可以只构造包含 `app_id` 的占位运行时记录；不得因此从 AppRegistry 删除。
+
+### 19.2 枚举
 
 ```cpp
 enum class AppRuntime {
@@ -1673,7 +1651,7 @@ enum class AppRunAuthorization {
 };
 ```
 
-### 21.3 HostComponentRecord
+### 19.3 HostComponentRecord
 
 ```cpp
 struct HostComponentRecord {
@@ -1690,130 +1668,7 @@ struct HostComponentRecord {
 
 ---
 
-## 22. 实施阶段记录（历史）
-
-### 阶段 0：清单和协议冻结
-
-- `manifest_version` 使用 `KAVIO_MANIFEST_VERSION` 的当前值（1），仅在格式契约调整时再评估变更；
-- 不定义任何 App 与 Host Component（主机组件）的生命周期关联字段；
-- host 对象保持可选；
-- 保留 native/python runtime；
-- 保留 auto_start；
-- 冻结 Python archive/online/auto 安装模式；
-- 定义双端开发模式；
-- 定义 SystemChannel Config Definition 请求/响应与 App IPC 请求/响应。
-
-### 阶段 1：生命周期与 Channel 解耦
-
-- 删除 USB 离线停止 App 的逻辑；
-- 对端 Endpoint Offline 只改变通信就绪状态，不停止 App；
-- 删除 Kavio App Host 停止联动 App 的逻辑；
-- ChannelID 独立于 Kavio App Host 和 USB 会话生命周期；
-- USB 恢复后通过双端 Endpoint Snapshot 恢复通信状态；
-- 保留 SO_PEERCRED PID 强绑定；
-- auto_start 不依赖 USB 和 Kavio App Host。
-
-### 阶段 2：配置职责调整
-
-- AppService 只提供 App 数据目录；
-- SDK 增加标准完整配置请求和响应；
-- App 自行读取、保存和应用配置；
-- KavioWin 配置页面要求 App 运行且 SystemChannel 可用。
-
-### 阶段 3：Python 环境安装
-
-- 镜像预装 Miniforge；
-- Python 环境归属 App Runtime，路径固定为 `<app_id>/runtime/python_env/`；
-- 支持环境归档恢复；
-- 支持 environment.yml 在线创建；
-- 支持 requirements.txt 在线创建；
-- 环境创建放入安装工作线程；
-- 环境失败导致整个安装失败；
-- 不增加独立 Python 环境状态。
-
-### 阶段 4：双端开发模式
-
-- KavioWin 增加 host_developer_mode；
-- Platform 增加 device_developer_mode；
-- 增加设备开发模式查询和设置协议；
-- 未签名双端包要求双端模式同时开启；
-- 每次启动前重新校验开发模式；
-- 关闭模式时停止对应未签名进程；
-- 管理界面增加持续风险提示和运行授权状态。
-
-### 阶段 5：KavioWin 管理界面
-
-- 分离Device Component（设备组件）、Host Component（主机组件）和通信状态；
-- 显示信任和运行授权状态；
-- 增加单独和组合启动停止；
-- 增加 auto_start 编辑；
-- 增加双端开发模式设置；
-- 不显示 Python 环境独立状态。
-
-### 阶段 6：稳定性验证
-
-重点验证：
-
-- Device Component（设备组件） 在 USB 断开后继续运行；
-- Host Component（主机组件）停止后Device Component（设备组件） 继续运行；
-- Device Component 停止后Host Component（主机组件）可以继续运行；
-- USB 恢复后 App 不重启即可恢复通信；
-- 纯Device Component（设备组件） 在无 Kavio App Host 时仍有 SystemChannel 通用配置能力；
-- auto_start App 在 Platform 启动后只自动启动一次；
-- App 异常退出后不自动保活；
-- Python 在线依赖安装成功和失败流程；
-- Python 离线环境恢复；
-- 环境失败导致整体安装失败；
-- 官方签名包在正常模式安装和运行；
-- 未签名纯Device Component（设备组件） 只有设备开发模式开启时才能安装和运行；
-- 未签名Host Component DLL 只有上位机开发模式开启时才能安装和运行；
-- 未签名双端包要求双端开发模式；
-- 关闭设备开发模式会停止运行中的未签名 App；
-- 关闭上位机开发模式会停止运行中的未签名 Kavio App Host；
-- 重新开启模式后不会自动立即启动；
-- AppService 不持久化业务配置；
-- Host Component 不读取或修改 App Configuration；
-- Host Component 与Device Component（设备组件） 之间按完整原始数据报双向通信；
-- App 只能访问自身 Channel。
-
----
-
-## 23. 第一版验收标准（阶段验收记录）
-
-1. 可以安装含Device Component（设备组件） 和可选 Host Component DLL 的官方签名包。
-2. 可以安装只包含Device Component（设备组件） 的官方签名包。
-3. 未签名纯Device Component（设备组件） 只有设备开发模式开启时才能安装。
-4. 未签名Host Component DLL 只有上位机开发模式开启时才能安装。
-5. 未签名双端包只有双端开发模式均开启时才能安装。
-6. 官方签名无效或官方签名文件摘要不一致时不能按未签名包直接安装。
-7. 原生 App 使用指定普通用户运行。
-8. Python App 使用 app_id 对应的独立环境运行。
-9. Python App 可以在线安装依赖，也可以恢复完整离线环境。
-10. Python 环境创建失败时整个应用安装失败。
-11. 不显示独立 Python 环境运行状态。
-12. auto_start App 在 Platform 启动后只自动启动一次。
-13. App 异常退出后不自动保活。
-14. USB 断开不会停止Device Component（设备组件）。
-15. Host Component（主机组件）停止不会停止Device Component（设备组件）。
-16. Device Component（设备组件） 停止不会停止Host Component（主机组件）。
-17. USB 恢复后原 App 进程可以恢复业务 Channel。
-18. App 和 Host Component（主机组件）可以分别启动和停止。
-19. 纯Device Component（设备组件） 不需要 Kavio App Host 也可以被管理和配置。
-20. App 只能访问自身 app_id 对应 Channel。
-21. PID 身份来自 SO_PEERCRED，不信任客户端声明。
-22. AppService 不持久化业务配置。
-23. KavioWin 每次向 App 发送完整 App Configuration，不发送差异字段，不使用 config_version。
-24. Device SDK 统一校验和持久化 App Configuration，App 应用生效值；Host Component 不参与配置链路。
-25. Host Component 与Device Component（设备组件） 之间使用保持边界和顺序的完整原始数据报，框架不解析业务协议。
-26. 关闭设备开发模式后，运行中的未签名Device Component（设备组件） 被停止且不能再次启动。
-27. 关闭上位机开发模式后，运行中的未签名 Kavio App Host 被停止且不能再次启动。
-28. 未签名应用在管理页面持续显示“签名未验证”。
-29. 内置 App 与用户 App 来源明确，用户包不能覆盖内置 App。
-30. Platform 核心服务不会被错误包装为普通可卸载 App。
-
----
-
-## 24. 最终设计结论
+## 20. 最终设计结论
 
 1. Device Component（设备组件） 是主要业务主体，Host Component（主机组件）是可选辅助组件。
 2. 应用包可以包含Device Component（设备组件） 和 Host Component DLL，也可以只包含Device Component（设备组件）。

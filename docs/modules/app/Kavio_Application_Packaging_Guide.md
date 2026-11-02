@@ -19,7 +19,7 @@ kavio_app/<project_name>/
 ├── package/                 # 进入版本库
 │   ├── kavio_package.json
 │   ├── schema_description.json # 必需；无配置写 {}
-│   ├── icon.png           # 必需；64×64 PNG
+│   ├── icon.png           # 必需；PNG，最大 512×512，最大 512 KiB
 │   └── assets/            # 可选其他静态资源
 ├── output/                  # 不进入版本库
 │   ├── device/
@@ -31,8 +31,8 @@ kavio_app/<project_name>/
 
 ```bash
 cd kavio_app
-python3 kavio_app.py status demo_communication
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py status sdk_showcase
+python3 kavio_app.py package sdk_showcase
 ```
 
 `kavio_app.py` 会创建临时暂存目录，将 `package/` 中的清单和静态资源与 `output/` 中清单声明的运行目录合并，再调用 `tools/build_package.py`。
@@ -87,7 +87,7 @@ python3 kavio_app/kavio_app.py --help
 python3 kavio_app/tools/build_package.py --help
 ```
 
-两个 Python 脚本都只使用标准库。
+`kavio_app.py` 主要使用 Python 标准库；低级打包器在生成 Protobuf JSON Manifest 时还需要 Python `protobuf` 运行时（当前建议 `protobuf>=3.20.3`）。
 
 ### 2.2 设备端 Python App
 
@@ -109,29 +109,34 @@ python3 kavio_app/tools/build_package.py --help
 kavio_app/<project_name>/
 ├── package/
 │   ├── kavio_package.json
-│   ├── config/
-│   └── assets/
+│   ├── icon.png
+│   └── schema_description.json
 ├── output/
 │   ├── device/
 │   │   ├── app_entry
 │   │   ├── lib/
 │   │   ├── models/
 │   │   └── resources/
-│   └── host/
+│   └── host/                 # 可选
 │       ├── host.dll
 │       ├── helper.dll
 │       └── resources/
 └── dist/
 ```
 
-规则：
+固定规则：
 
-1. `package/` 根目录必须包含 `kavio_package.json`。
-2. 配置、图标等静态路径相对于 `package/`。
-3. `device.directory` 和 `host.directory` 对应的运行目录相对于 `output/`。
-4. 主入口文件必须真实存在于 `output/<directory>/`。
-5. `package/` 和被使用的 `output/` 目录均不允许符号链接。
-6. `output/` 和 `dist/` 不应提交版本库。
+1. `package/kavio_package.json` 是唯一的打包配置文件。
+2. App 图标固定为 `package/icon.png`，不可在 `kavio_package.json` 中修改路径。
+3. App Configuration Schema 固定为 `package/schema_description.json`；无配置时内容必须为 `{}`。
+4. Device Component 构建产物固定放在 `output/device/`。
+5. Host Component 构建产物固定放在 `output/host/`；没有 Host Component 时不创建即可。
+6. `device.entry` 相对于 `output/device/`；`host.binary` 相对于 `output/host/`。
+7. 生成 `.kap` 后，Device/Host 文件分别固定进入包内 `device/`、`host/` 目录。
+8. 所有 Kavio App 都是 UI App，并且始终显示在设备 Launcher；不存在隐藏 App 配置项。
+9. App 包不能声明自动启动；新安装 App 的自动启动初始值固定为 `false`。如系统提供运行期自动启动设置，由设备管理功能单独维护，不属于包元数据。
+10. `package/`、被使用的 `output/` 目录以及其中的文件均不允许使用符号链接。
+11. `output/` 和 `dist/` 不应提交版本库。
 
 ### 3.2 临时待打包目录
 
@@ -140,10 +145,10 @@ kavio_app/<project_name>/
 ```text
 <temporary>/package/
 ├── kavio_package.json
+├── icon.png
+├── schema_description.json
 ├── device/
-├── host/                    # 可选
-├── schema_description.json   # 必需
-└── assets/                  # 可选（含图标）
+└── host/                    # 可选
 ```
 
 这个临时目录才是 `tools/build_package.py --source-dir` 的实际输入。开发者通常不需要手工创建或保留它。
@@ -152,7 +157,7 @@ kavio_app/<project_name>/
 
 直接调用 `build_package.py` 时，待打包目录必须满足：
 
-1. 清单和全部运行文件已经位于同一根目录下；
+1. `icon.png`、`schema_description.json`、`device/` 已位于待打包根目录；有 Host Component 时还必须有 `host/`；
 2. 路径必须使用 `/`，不能使用绝对路径、`..`、反斜杠或盘符；
 3. 不允许包含符号链接；
 4. 根目录不能预先存在 `manifest.json` 或 `signature.json`；
@@ -163,34 +168,30 @@ kavio_app/<project_name>/
 
 ---
 
-## 4. kavio_package.json 完整字段说明
+## 4. kavio_package.json 字段说明
 
 ### 4.1 完整示例
 
 ```json
 {
   "packageConfigVersion": 1,
-  "appId": "com.kavio.demo.app-communication",
+  "appId": "com.kavio.demo.sdk-showcase",
   "version": "1.0.0",
-  "name": "Demo App Communication",
-  "description": "Windows Host Component and device App communication sample",
-  "icon": "assets/icon.png",
+  "name": "Kavio SDK Showcase",
+  "description": "Integrated public SDK capability showcase",
   "device": {
-    "directory": "device",
     "runtime": "native",
-    "entry": "demo_communication",
-    "arguments": [],
-    "autoStart": false
+    "entry": "kavio_sdk_showcase",
+    "arguments": []
   },
   "host": {
-    "directory": "host",
     "binary": "host.dll",
-    "panel": false
+    "panel": true
   }
 }
 ```
 
-**注意：** 与 `kavio_package.json` 同级必须有 `schema_description.json`，文件为 `{}` 表示无配置，其余内容必须符合 Config Definition v2.0。SDK 运行时从字段 `value` 生成默认值。详见 [`Kavio_App_Configuration_Spec.md`](Kavio_App_Configuration_Spec.md)。
+`icon`、`ui`、`autoStart`、`device.directory`、`host.directory` 都不是合法字段。固定路径和默认行为由打包工具统一管理。
 
 ### 4.2 顶层字段
 
@@ -198,28 +199,39 @@ kavio_app/<project_name>/
 |---|---:|---|---|---|
 | `packageConfigVersion` | 是 | 非负整数 | 无 | 打包配置格式版本，当前必须为 `1` |
 | `appId` | 是 | 字符串 | 无 | 应用永久唯一标识；KavioWin 与 Platform 使用同一算法由该值独立生成稳定 ChannelID |
-| `version` | 是 | 字符串 | 无 | 应用包版本，工具不强制语义化版本格式，建议使用 `主版本.次版本.修订版本` |
-| `name` | 是 | 字符串 | 无 | 应用管理页面显示名称 |
+| `version` | 是 | 字符串 | 无 | 应用包版本，建议使用 `主版本.次版本.修订版本` |
+| `name` | 是 | 字符串 | 无 | 应用管理页面和 Launcher 显示名称 |
 | `description` | 否 | 字符串 | 空字符串 | 应用说明 |
-| `icon` | 否 | 相对路径 | 空 | 应用 PNG（便携式网络图形）图标文件名/路径，相对于待打包目录根目录；必须为 64×64 像素 |
-| `device` | 是 | 对象 | 无 | Device Component（设备组件） 定义 |
-| `host` | 否 | 对象 | 无 | Windows Host Component（主机组件）定义；省略后为纯Device Component（设备组件） 包 |
+| `device` | 是 | 对象 | 无 | Device Component（设备组件）定义 |
+| `host` | 否 | 对象 | 无 | Windows Host Component（主机组件）定义；省略后为纯 Device App |
 
-当前打包工具要求 `device（设备端定义）` 必须存在，因此不支持只包含Host Component DLL 的 Host-only（纯上位机）包。
+当前打包工具要求 `device` 必须存在，因此不支持 Host-only 包。
 
-`icon（应用图标）` 为可选字段：
+### 4.3 固定图标规则
 
-- 省略 `icon` 或设置为空字符串时，应用包不携带自定义图标，KavioWin 使用内置默认应用图标；
-- 填写 `icon` 后，目标文件必须存在于待打包目录中，文件格式必须为 PNG，分辨率必须严格为 **64×64**；
-- 图标文件不存在、不是 PNG 或分辨率不是 64×64 时，打包直接失败；KavioWin 在安装外部应用包时也会再次校验；
-- KavioWin 默认图标资源 ID 为 `IDR_PNG_APP_DEFAULT`，资源路径为 `res\AppDefault.png`。
+每个 App 必须提供：
 
-### 4.3 appId 规则
+```text
+package/icon.png
+```
+
+该文件名和路径固定，不在 `kavio_package.json` 中声明。
+
+要求：
+
+- 必须为有效 PNG；
+- 宽度和高度分别为 **1～512 像素**；
+- 文件大小不超过 **512 KiB**；
+- 设备 Launcher 与 Windows Host 根据实际 UI 尺寸缩放源 PNG；
+- 图标缺失、格式错误、尺寸超限或文件过大时，打包失败；
+- 对于已登记但本地元信息损坏、无法读取图标的 App，系统使用默认图标。
+
+### 4.4 appId 规则
 
 `appId（应用唯一标识）` 必须满足：
 
 - 最长 128 个字符；
-- 只能使用小写 ASCII（美国信息交换标准代码）字母、数字、`.` 和 `-`；
+- 只能使用小写 ASCII 字母、数字、`.` 和 `-`；
 - 首字符和末字符必须是字母或数字；
 - 不允许连续两个 `.`；
 - 安装、升级和通信期间必须保持稳定；
@@ -234,30 +246,16 @@ com.company.camera-service
 app1.device-task
 ```
 
-非法示例：
-
-```text
-Com.Kavio.Sample
-.com.kavio.sample
-com..kavio.sample
-com_kavio_sample
-com.kavio.sample.
-```
-
-### 4.4 device 字段
+### 4.5 device 字段
 
 | 字段 | 必填 | 类型 | 默认值 | 路径基准 | 说明 |
 |---|---:|---|---|---|---|
-| `directory` | 是 | 相对路径 | 无 | 待打包目录根目录 | 设备端全部文件所在目录 |
-| `runtime` | 否 | 字符串 | `native` | — | `native（原生程序）` 或 `python（Python 脚本）` |
-| `entry` | 是 | 相对路径 | 无 | `device.directory` | 设备端主入口程序或 Python 主脚本 |
+| `runtime` | 否 | 字符串 | `native` | — | `native` 或 `python` |
+| `entry` | 是 | 相对路径 | 无 | `output/device/` | 设备端主入口程序或 Python 主脚本 |
 | `arguments` | 否 | 字符串数组 | `[]` | — | AppService 启动 App 时追加的参数列表 |
-| `autoStart` | 否 | 布尔值 | `false` | — | Platform 启动后是否由 AppService 自动启动一次 |
 | `python` | Python App 必填 | 对象 | 无 | — | Python 环境定义 |
 
-#### arguments 参数规则
-
-每一个数组元素会作为一个独立命令行参数传递，不经过 Shell（命令解释器）解析。
+`arguments` 每一个数组元素都会作为一个独立命令行参数传递，不经过 Shell 解析。
 
 正确示例：
 
@@ -270,101 +268,49 @@ com.kavio.sample.
 ]
 ```
 
-不要写成：
+App 包和 `manifest.json` 均不包含自动启动字段。新安装 App 的设备运行期 `auto_start` 初始值固定为 `false`，后续仅由设备运行期设置管理。
 
-```json
-"arguments": [
-  "--config config/device.json --log-level info"
-]
-```
-
-除非设备程序本身就是把整段内容当作一个参数处理。
-
-#### autoStart 行为
-
-`autoStart=true` 表示：
-
-- Platform 启动并完成 AppService 初始化后，自动尝试启动一次；
-- 不依赖 USB 是否连接；
-- 不依赖Host Component（主机组件）是否启动；
-- App 异常退出后不会自动保活或重复拉起。
-
-### 4.5 host 字段
+### 4.6 host 字段
 
 | 字段 | 必填 | 类型 | 默认值 | 路径基准 | 说明 |
 |---|---:|---|---|---|---|
-| `directory` | 是 | 相对路径 | 无 | 待打包目录根目录 | Host Component（主机组件）及其全部依赖文件所在目录 |
-| `binary` | 是 | 相对路径 | 无 | `host.directory` | Host Component（主机组件）主 DLL |
+| `binary` | 是 | 相对路径 | 无 | `output/host/` | Host Component 主 DLL |
 | `panel` | 否 | 布尔值 | `false` | — | 是否提供 App Panel；为 `true` 时应用必须实现面板导出接口 |
 
-`host.directory` 中可以包含应用依赖 DLL、配置、模板和资源。所有普通文件都会保留相对路径打入包内。
+`output/host/` 中可以包含应用依赖 DLL、配置、模板和资源，打包时全部复制到包内固定的 `host/` 目录并保持相对路径。
 
-Host Component 不在应用包清单中保存独立 Host Component API（主机组件接口）版本，也不单独做 SDK 版本校验。应用与宿主之间的 C ABI 通过 `struct_size` 做结构边界保护。
-
-如果应用不需要Host Component DLL，可以完全省略 `host`：
+如果应用不需要 Host Component，可以完全省略 `host`：
 
 ```json
 {
   "device": {
-    "directory": "device",
     "runtime": "native",
     "entry": "device_app",
-    "arguments": [],
-    "autoStart": false
+    "arguments": []
   }
 }
 ```
 
-### 4.6 schema_description.json 固定文件
+### 4.7 schema_description.json 固定文件
 
-每个 App 都必须包含与 `kavio_package.json` 同级的 `schema_description.json`。
-无配置统一使用 **`{}`**；文件缺失、空文件、非对象、普通配置值 JSON 或无效 Config Definition
-必须拒绝，并提示“无配置请使用 `{}`”。不要在 `kavio_package.json` 声明 Schema 信息，
-不要生成 `config/default.json`。SDK 启动时读取字段 `value` 生成默认配置。
+每个 App 都必须包含：
 
-**enum 关联值与自定义输入示例：**
-
-```json
-{
-  "key": "server_address",
-  "name": "服务地址",
-  "category": "网络",
-  "description": "预设地址或自定义地址",
-  "type": "enum",
-  "value": "192.168.0.1",
-  "show_value": true,
-  "required": true,
-  "options": [
-    {"label": "server1", "value": "192.168.0.1"},
-    {"label": "server2", "value": "192.168.0.2"}
-  ],
-  "custom": {
-    "label": "自定义",
-    "placeholder": "请输入地址",
-    "min_length": 1,
-    "max_length": 256
-  }
-}
+```text
+package/schema_description.json
 ```
 
-下拉框显示 `server1/server2/自定义`，预设项下方显示只读实际值；“自定义”下方开放输入。GET/SET 仍仅传输 `server_address` 对应的字符串。`show_value` 默认关闭，`custom` 不声明则不可自定义。完整校验规则参见当前配置规范。
+文件名和路径固定，不在 `kavio_package.json` 中声明。无配置统一使用 **`{}`**；文件缺失、空文件、非对象或无效 Config Definition 必须拒绝。
 
-App Panel 不属于 App Configuration。是否提供 App Panel 由 `host.panel` 单独声明。
+App Panel 不属于 App Configuration。是否提供 App Panel 只由 `host.panel` 声明。
 
-### 4.7 路径基准汇总
+### 4.8 UI 与 Launcher 默认规则
 
-| 字段 | 相对路径基准 |
-|---|---|
-| `icon` | 待打包目录根目录 |
-| `device.directory` | 待打包目录根目录 |
-| `device.entry` | `device.directory` |
-| `device.python.environmentArchive` | `device.directory` |
-| `device.python.environmentDefinition` | `device.directory` |
-| `device.python.requirements` | `device.directory` |
-| `host.directory` | 待打包目录根目录 |
-| `host.binary` | `host.directory` |
+Kavio 不再提供 App 隐藏能力：
 
-配置文件中统一使用 `/` 作为分隔符，即使在 Windows 上打包，也不能写 `\`。
+- 每个 App 都视为 UI App；
+- 每个 App 都进入设备 Launcher；
+- `kavio_package.json` 不提供独立的 UI 声明对象；
+- Platform 不根据包内声明决定 App 是否进入 Launcher。
 
 ---
 
@@ -376,8 +322,8 @@ App Panel 不属于 App Configuration。是否提供 App Panel 由 `host.panel` 
 kavio_app/camera_service/
 ├── package/
 │   ├── kavio_package.json
-│   ├── schema_description.json
-│   └── assets/icon.png
+│   ├── icon.png
+│   └── schema_description.json
 ├── output/
 │   ├── device/
 │   │   ├── camera_app
@@ -398,19 +344,15 @@ kavio_app/camera_service/
   "version": "1.0.0",
   "name": "Camera Service",
   "description": "Camera processing App with Windows configuration app",
-  "icon": "assets/icon.png",
   "device": {
-    "directory": "device",
     "runtime": "native",
     "entry": "camera_app",
     "arguments": [
       "--model",
       "models/detector.bin"
-    ],
-    "autoStart": true
+    ]
   },
   "host": {
-    "directory": "host",
     "binary": "host.dll",
     "panel": true
   }
@@ -439,7 +381,8 @@ python3 kavio_app.py package camera_service
 kavio_app/device_task/
 ├── package/
 │   ├── kavio_package.json
-│   └── assets/icon.png
+│   ├── icon.png
+│   └── schema_description.json
 ├── output/device/
 │   ├── task_app
 │   ├── config/task.json
@@ -456,16 +399,13 @@ kavio_app/device_task/
   "version": "1.0.0",
   "name": "Device Task",
   "description": "Device-only background task",
-  "icon": "assets/icon.png",
   "device": {
-    "directory": "device",
     "runtime": "native",
     "entry": "task_app",
     "arguments": [
       "--config",
       "config/task.json"
-    ],
-    "autoStart": true
+    ]
   }
 }
 ```
@@ -484,9 +424,9 @@ kavio_app/device_task/
 |---|---:|---|---|
 | `pythonVersion` | 否 | 空，在线创建时按 Python 3 处理 | Python 版本，例如 `3.11` |
 | `installMode` | 否 | `auto` | `auto（自动）`、`archive（离线归档）` 或 `online（在线安装）` |
-| `environmentArchive` | 条件必填 | 空 | 离线环境归档，相对于 `device.directory` |
-| `environmentDefinition` | 条件必填 | 空 | `environment.yml（Conda 环境定义）`，相对于 `device.directory` |
-| `requirements` | 条件必填 | 空 | `requirements.txt（Pip 依赖列表）`，相对于 `device.directory` |
+| `environmentArchive` | 条件必填 | 空 | 离线环境归档，相对于固定的 `output/device/` |
+| `environmentDefinition` | 条件必填 | 空 | `environment.yml（Conda 环境定义）`，相对于固定的 `output/device/` |
+| `requirements` | 条件必填 | 空 | `requirements.txt（Pip 依赖列表）`，相对于固定的 `output/device/` |
 
 三个环境输入至少存在一个：
 
@@ -542,14 +482,12 @@ python_app_package/
   "name": "Python Task",
   "description": "Python device application",
   "device": {
-    "directory": "device/python",
     "runtime": "python",
     "entry": "main.py",
     "arguments": [
       "--config",
       "config/task.json"
     ],
-    "autoStart": false,
     "python": {
       "pythonVersion": "3.11",
       "installMode": "online",
@@ -578,11 +516,9 @@ python_app_package/
   "version": "1.0.0",
   "name": "Python Simple Task",
   "device": {
-    "directory": "device/python",
     "runtime": "python",
     "entry": "main.py",
     "arguments": [],
-    "autoStart": false,
     "python": {
       "pythonVersion": "3.11",
       "installMode": "online",
@@ -605,11 +541,9 @@ python_app_package/
   "version": "1.0.0",
   "name": "Python Offline Task",
   "device": {
-    "directory": "device/python",
     "runtime": "python",
     "entry": "main.py",
     "arguments": [],
-    "autoStart": false,
     "python": {
       "pythonVersion": "3.11",
       "installMode": "archive",
@@ -685,16 +619,16 @@ python .\kavio_app/tools/build_package.py `
   --output D:\KavioPackages\output\app.kap
 ```
 
-配置文件内部的路径仍必须使用 `/`：
+配置文件内部仍存在的相对路径字段必须使用 `/`。例如：
 
 ```json
-"directory": "device"
+"entry": "bin/app"
 ```
 
 不能写：
 
 ```json
-"directory": "device\\app"
+"entry": "bin\\app"
 ```
 
 ### 8.3 成功输出
@@ -773,29 +707,38 @@ signature.json
 ```json
 {
   "manifestVersion": 1,
-  "appId": "com.kavio.demo.app-communication",
+  "appId": "com.kavio.demo.sdk-showcase",
   "version": "1.0.0",
-  "name": "Demo App Communication",
+  "name": "Kavio SDK Showcase",
   "description": "Demo",
+  "icon": "icon.png",
   "device": {
     "runtime": "native",
-    "entry": "device/demo_communication",
-    "arguments": [],
-    "autoStart": false
+    "entry": "device/kavio_sdk_showcase"
   },
   "host": {
     "binary": "host/host.dll",
-    "panel": false
+    "panel": true
   },
   "files": [
     {
-      "path": "device/demo_communication",
+      "path": "device/kavio_sdk_showcase",
       "size": "123456",
       "sha256": "..."
     },
     {
       "path": "host/host.dll",
       "size": "234567",
+      "sha256": "..."
+    },
+    {
+      "path": "icon.png",
+      "size": "494",
+      "sha256": "..."
+    },
+    {
+      "path": "schema_description.json",
+      "size": "1234",
       "sha256": "..."
     }
   ]
@@ -998,9 +941,9 @@ tar -xOf .\app.kap manifest.json
 | `kavio_package.json` 不存在 | 输入目录错误或缺少配置文件 | 确认 `--source-dir` 指向暂存目录根目录 |
 | `unsupported packageConfigVersion` | 配置版本不是 1 | 将 `packageConfigVersion` 改为 `1` |
 | `appId may contain only...` | ID 含大写、下划线或其他非法字符 | 使用小写字母、数字、`.`、`-` |
-| `device.directory must identify a real directory` | 设备目录不存在或是符号链接 | 修正目录路径并使用真实目录 |
-| `device.entry is not a packaged file` | 入口路径错误或入口文件未复制到暂存目录 | 按 `device.directory` 的相对路径修正 `entry` |
-| `host.binary is not a packaged file` | 主 DLL 路径错误 | 按 `host.directory` 的相对路径修正 `binary` |
+| `device output directory must be a real directory` | `output/device/` 不存在或是符号链接 | 重新构建设备组件并使用固定的 `output/device/` 目录 |
+| `device.entry is not a packaged file` | 入口路径错误或入口文件未生成 | 确认 `entry` 相对于固定的 `output/device/` 且文件真实存在 |
+| `host.binary is not a packaged file` | 主 DLL 路径错误或未生成 | 确认 `binary` 相对于固定的 `output/host/` 且文件真实存在 |
 | `Config Definition validation failed` | 已声明的 Config Definition 缺失或内容非法 | 根据错误中的字段路径修正 Config Definition 或字段级 value |
 | `Python applications require at least one environment input` | Python App 没有环境归档、YAML 或 requirements | 至少提供一种环境输入 |
 | `symbolic-link files/directories are not allowed` | 输入目录包含符号链接 | 将目标文件真实复制到暂存目录 |
@@ -1010,7 +953,7 @@ tar -xOf .\app.kap manifest.json
 | Python 在线环境安装失败 | 设备未允许在线安装、源不可用或依赖不兼容 | 检查 `allow_online_python_install`、Conda Channel、Pip Index 和依赖版本 |
 | Python 依赖文件被拒绝 | 文件包含 URL、Git 或自定义软件源指令 | 删除包内源配置，使用 Platform 统一软件源 |
 | App 可以运行但不能通信 | App 被手工启动、对端 Endpoint 未上线，或 `appId`/ChannelID 一致性校验失败 | 通过 AppService 正式启动，确认双端组件状态并检查 `appId` |
-| Host 应用无法加载 | DLL 架构错误或依赖 DLL 缺失 | 使用与 KavioWin 相同架构，并把依赖放入 `host.directory` |
+| Host 应用无法加载 | DLL 架构错误或依赖 DLL 缺失 | 使用与 KavioWin 相同架构，并把依赖放入固定的 `output/host/` |
 
 ---
 
@@ -1022,7 +965,7 @@ tar -xOf .\app.kap manifest.json
 2. 必须包含Device Component（设备组件），不支持纯上位机包。
 3. 没有忽略文件配置；暂存目录中的普通文件默认全部打包。
 4. 不验证 `version` 是否符合语义化版本规范。
-5. 不验证图标格式和尺寸，建议使用透明背景 PNG（便携式网络图形），尺寸不低于 128×128。
+5. 强制校验固定的 `package/icon.png`：PNG、宽高各 1～512 像素、文件不超过 512 KiB。
 6. 声明 Config Definition 时严格校验字段级 value、enum 预设选项及可选 custom 约束。
 7. 不负责交叉编译设备程序或构建Host Component DLL。
 8. 不自动分析 DLL 或 SO（共享对象）依赖，依赖文件由开发者自行准备。
@@ -1042,12 +985,12 @@ tar -xOf .\app.kap manifest.json
 
 ### 17.2 设备端
 
-- [ ] `device.directory` 正确。
+- [ ] 设备构建产物位于固定的 `output/device/`。
 - [ ] `device.entry` 存在。
 - [ ] 设备程序架构正确。
 - [ ] 所需 SO、模型、配置和资源已经复制。
 - [ ] `arguments` 每个元素是独立参数。
-- [ ] `autoStart` 符合预期。
+- [ ] 未在包配置中声明自动启动；新安装 App 初始为不自动启动。
 
 ### 17.3 上位机
 
@@ -1086,20 +1029,20 @@ tar -xOf .\app.kap manifest.json
 
 ## 18. 最小命令速查
 
-### 双端业务项目
+### 综合 SDK Demo
 
 ```bash
 cd kavio_app
-python3 kavio_app.py status demo_communication
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py status sdk_showcase
+python3 kavio_app.py package sdk_showcase
 ```
 
-### 纯设备业务项目
+### 自定义业务项目
 
 ```bash
 cd kavio_app
-python3 kavio_app.py status demo_rx_tx
-python3 kavio_app.py package demo_rx_tx
+python3 kavio_app.py status <project_name>
+python3 kavio_app.py package <project_name>
 ```
 
 ### 低级打包器
@@ -1108,31 +1051,21 @@ python3 kavio_app.py package demo_rx_tx
 
 ```bash
 python3 kavio_app/tools/build_package.py \
-  --source-dir ./package_source \
-  --output ./output/app.kap
+  --source-dir /path/to/staged_package \
+  --output /path/to/output.kap
 ```
 
 ### 查看包内容
 
 ```bash
-unzip -l ./output/app.kap
-unzip -p ./output/app.kap manifest.json
+unzip -l /path/to/app.kap
+unzip -p /path/to/app.kap manifest.json
 ```
 
 ### 安装未签名双端包
 
-```text
-KavioWin 应用管理
-→ 开启上位机开发模式
-→ 开启设备开发模式
-→ 安装
-→ 确认风险
-```
+必须同时打开 Host 和 Device 开发模式，再通过 KavioWin 安装。
 
 ### 正式启动
 
-```text
-选择应用
-→ App启动
-→ 如有Host Component DLL，再点击 Host启动
-```
+安装完成后由 AppService / Kavio App Host 按清单启动，业务 App 不应依赖手工执行包内入口。

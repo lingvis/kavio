@@ -323,17 +323,27 @@ SDK 总览：[`kavio_sdk/README.md`](kavio_sdk/README.md)
 
 ## 9. Demo App
 
-推荐按以下顺序理解 Kavio App 开发：
+当前公开仓库提供两个不同定位的示例：
 
-| 目标 | Demo |
-| --- | --- |
-| Device 生命周期、RX/TX/Input | `demo_rx_tx` |
-| Host ↔ Device 双向通信 | `demo_communication` |
-| App Panel、图片传输、TX 联动 | `demo_panel_image` |
-| Python Device Component | `demo_metrics_panel` |
-| Windows 虚拟显示与视频传输 | `demo_virtual_hdmi` |
+- `kavio_app/app_frame`：最小 Native C++ App 模板，App ID 为 `com.kavio.template.app-frame`，用于复制后快速开始新 App；
+- `kavio_app/sdk_showcase`：Kavio SDK 综合能力演示 App，App ID 为 `com.kavio.demo.sdk-showcase`。
 
-详细说明：`kavio_app/README.md`
+其中 `sdk_showcase` 在一个 App 中演示：
+
+- AppView + LVGL 全屏渲染与触摸；
+- Host ↔ Device USB App Channel 双向通信、1–1023 KB 可配置载荷、完整性校验与确认吞吐率测试；
+- HDMI RX 单帧读取/缩放预览与 HDMI TX 最多 3 个 Surface，包含约 30 Hz 移动和 `valid_rect` Partial 发布示例；
+- 独立 Keyboard 与 Mouse 输入输出测试；Keyboard 覆盖 A–Z、0–9、系统/导航/F1–F12，Mouse 使用触摸区域实时映射绝对坐标并支持左右键/滚轮；
+- H.264 公共流订阅、SHM 数据包读取并保存到 App 缓存目录（不播放）；
+- Schema 配置读取、更新与恢复默认值；
+- Runtime Data / Statistics；
+- 标准 App Configuration；
+- Windows Host Component 与独立 App Panel。
+
+视频播放暂不作为公开 Demo 能力；未来若开放正式视频播放 SDK，将单独设计公开契约。
+
+最小模板说明：[`kavio_app/app_frame/README.md`](kavio_app/app_frame/README.md)。
+综合示例说明：[`kavio_app/sdk_showcase/README.md`](kavio_app/sdk_showcase/README.md)。
 
 ## 10. 快速开始
 
@@ -346,19 +356,14 @@ cd kavio_sdk/device
 
 Native App 通过生成的 CMake package 链接 Device SDK，不直接编译 SDK 私有源码。
 
-### 10.2 构建 Device Demo
+### 10.2 构建最小 App Frame Device Component
 
 ```bash
-cd kavio_app/demo_rx_tx/device
+cd kavio_app/app_frame/device
 ./build.sh -r
 ```
 
-Python Demo：
-
-```bash
-cd kavio_app/demo_metrics_panel/device
-./build.sh
-```
+需要综合 SDK 功能示例时再构建 `kavio_app/sdk_showcase/device`。
 
 ### 10.3 构建 Host Component
 
@@ -371,8 +376,8 @@ Kavio App 安装包使用 `.kap` 后缀，含义为 **Kavio App Package**。
 ```bash
 cd kavio_app
 python3 kavio_app.py list
-python3 kavio_app.py status demo_communication
-python3 kavio_app.py package demo_communication
+python3 kavio_app.py status app_frame
+python3 kavio_app.py package app_frame
 ```
 
 生成文件位于：

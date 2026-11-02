@@ -1,33 +1,33 @@
-#pragma once
+﻿#pragma once
 /*
  * KavioHost.h
  *
- * Kavio Host Component ���� C ABI��
+ * Kavio Host Component 对外 C ABI。
  *
- * Host Component ������ֻ��Ҫ�������ͷ�ļ�������Ҫ���� Host SDK �⡣
- * KavioAppHost ���� DLL ���ء����̹������� KavioWin ��ͨ�ţ��������ʵ��
- * ���ļ�ĩβ�����ĵ�����ڣ���ͨ�� KavioHostApi ��������������
+ * Host Component 开发者只需要包含这个头文件，不需要链接 Host SDK 库。
+ * KavioAppHost 负责 DLL 加载、进程管理和与 KavioWin 的通信；组件负责实现
+ * 本文件末尾声明的导出入口，并通过 KavioHostApi 调用宿主能力。
  *
- * ABI Լ����
- * 1. Host ABI ��ʹ�� Device SDK �汾�ţ�ͨ�� struct_size �жϽṹ���ֶο����ԡ�
- * 2. ��ǰ SDK ��δ��ʽ������ABI ��ֱ�ӵ�����Ҫ�� Host DLL ���±��룻��ά���ɰ汾���ݡ�
- * 3. ֻ�ܷ��� struct_size �Ѹ��ǵ��ֶΡ�
- * 4. ABI �߽粻���� C++ STL �����쳣������п����/�ͷŵ��ڴ档
- * 5. KavioAppHost �� KAVIO_HOST_TYPES_ONLY �������ļ���ֻȡ�� ABI ���ͣ�������
- *    �����Ҫʵ�ֵĵ�����ڣ�DLL Loader �ĺ���ָ������Ҳֻ������ KavioAppHost �ڲ���
- * 6. ʵ�� Host Component ������ڵ� .cpp �����ڰ������ļ�ǰ����
- *    KAVIO_HOST_IMPLEMENTATION������ͷ�ļ�ֻ�ṩ ABI ���ͣ���Ԥ������������ڣ�
- *    ���� MSVC ����ͨ������ __declspec(dllexport) �����ж�Ϊ��ͬ�������ԡ�
- *    SDK ͬʱ�Զ����� KavioHostInitLogging/KavioHostShutdownLogging��ʹ DLL ��ҵ�񴴽�ǰ��ʼ���Լ��ı�����־��
+ * ABI 约束：
+ * 1. Host ABI 不使用 Device SDK 版本号，通过 struct_size 判断结构体字段可用性。
+ * 2. 当前 SDK 尚未正式发布，ABI 可直接调整并要求 Host DLL 重新编译；不维护旧版本兼容。
+ * 3. 只能访问 struct_size 已覆盖的字段。
+ * 4. ABI 边界不传递 C++ STL 对象、异常或跨运行库分配/释放的内存。
+ * 5. KavioAppHost 以 KAVIO_HOST_TYPES_ONLY 包含本文件，只取得 ABI 类型，不声明
+ *    组件需要实现的导出入口；DLL Loader 的函数指针类型也只存在于 KavioAppHost 内部。
+ * 6. 实现 Host Component 导出入口的 .cpp 必须在包含本文件前定义
+ *    KAVIO_HOST_IMPLEMENTATION。这样头文件只提供 ABI 类型，不预先声明导出入口，
+ *    避免 MSVC 将普通声明与 __declspec(dllexport) 定义判定为不同链接属性。
+ *    SDK 同时自动导出 KavioHostInitLogging/KavioHostShutdownLogging，使 DLL 在业务创建前初始化自己的本地日志。
  *
- * ����ʵ�֣�
+ * 必须实现：
  *   KavioHostCreate / KavioHostStart / KavioHostStop /
  *   KavioHostDestroy / KavioHostOnData
  *
- * ����ʵ�֣�
+ * 按需实现：
  *   KavioHostPrepareStop / KavioHostOnDeviceState / KavioHostOpenPanel
  *
- * ʵ�ֵ����������Ƽ���ʽ��
+ * 实现导出函数的推荐形式：
  *   #define KAVIO_HOST_IMPLEMENTATION
  *   #include <kavio/KavioHost.h>
  *
@@ -77,33 +77,33 @@ typedef enum KavioResult
 
 
 
-/* ��ǰ App Ψһ��Ӧ�� Device Component ����һ���ǿ��������ݱ��� */
+/* 向当前 App 唯一对应的 Device Component 发送一条非空完整数据报。 */
 typedef KavioResult(KAVIO_HOST_CALL* KavioHostSendFn)(
     void* context,
     const void* data,
     size_t size);
 
-/* �Զ� Device Endpoint �����ҵ�ǰͨ����˫��ͨ��ʱ���ط� 0�� */
+/* 对端 Device Endpoint 在线且当前通道可双向通信时返回非 0。 */
 typedef uint32_t(KAVIO_HOST_CALL* KavioHostIsDeviceOnlineFn)(void* context);
 
-/* ���ص�ǰ App �� app_id �ȶ�����õ��� ChannelID�� */
+/* 返回当前 App 由 app_id 稳定计算得到的 ChannelID。 */
 typedef uint32_t(KAVIO_HOST_CALL* KavioHostGetChannelIdFn)(void* context);
 
-/* ���� KavioWin ֹͣ������������ǰ Host Component�� */
+/* 请求 KavioWin 停止并重新启动当前 Host Component。 */
 typedef KavioResult(KAVIO_HOST_CALL* KavioHostRestartFn)(
     void* context,
     uint32_t reason);
 
-/* Host DLL ���г����ļ� Logger��AppHost ������ SDK �Զ����������������������ڡ� */
+/* Host DLL 自行持有文件 Logger。AppHost 仅触发 SDK 自动导出的零参数生命周期入口。 */
 typedef KavioResult(KAVIO_HOST_CALL* KavioHostInitLoggingFn)(void);
 typedef void(KAVIO_HOST_CALL* KavioHostShutdownLoggingFn)(void);
 
-/* ���ص�ǰ App Host Component ��д��˽������Ŀ¼�� */
+/* 返回当前 App Host Component 可写的私有数据目录。 */
 typedef const char*(KAVIO_HOST_CALL* KavioHostGetDataPathFn)(void* context);
 
 /*
- * KavioAppHost �ṩ�� Host Component ��������������
- * ��ָ��� KavioHostCreate ��ʼ���� KavioHostDestroy ����ǰʼ����Ч��
+ * KavioAppHost 提供给 Host Component 的宿主能力表。
+ * 该指针从 KavioHostCreate 开始，到 KavioHostDestroy 返回前始终有效。
  */
 typedef struct KavioHostApi
 {
@@ -130,10 +130,10 @@ typedef struct KavioHostCreateParams
 {
     uint32_t struct_size;
 
-    /* ��ǰ Kavio App ��Ψһ app_id�� */
+    /* 当前 Kavio App 的唯一 app_id。 */
     const char* app_id;
 
-    /* KavioAppHost �ṩ����������������Ч�ڼ� KavioHostApi�� */
+    /* KavioAppHost 提供的宿主能力表。有效期见 KavioHostApi。 */
     const KavioHostApi* host;
 } KavioHostCreateParams;
 
@@ -144,31 +144,31 @@ typedef struct KavioHostCreateParams
 #if !defined(KAVIO_HOST_TYPES_ONLY) && !defined(KAVIO_HOST_IMPLEMENTATION)
 
 /*
- * ����ʵ�֣�����һ�� Host Component ʵ����
- * ����ֻ��������ʼ�����ɹ�ʱ�����˽�ж���д�� out_host��������� KavioHostStart��
+ * 必须实现：创建一个 Host Component 实例。
+ * 这里只做轻量初始化；成功时把组件私有对象写入 out_host，随后会调用 KavioHostStart。
  */
 KavioResult KAVIO_HOST_CALL KavioHostCreate(
     const KavioHostCreateParams* params,
     KavioHostHandle* out_host);
 
-/* ����ʵ�֣��������ҵ���߼��������̡߳� */
+/* 必须实现：启动组件业务逻辑及工作线程。 */
 KavioResult KAVIO_HOST_CALL KavioHostStart(KavioHostHandle host);
 
 /*
- * ��ѡʵ�֣��� KavioHostStop ǰֹͣ���������񣬲���������;����������
- * DLL δ�����÷���ʱ��KavioAppHost ֱ�������ý׶Ρ�
+ * 可选实现：在 KavioHostStop 前停止接受新任务，并尽量让在途任务收敛。
+ * DLL 未导出该符号时，KavioAppHost 直接跳过该阶段。
  */
 KavioResult KAVIO_HOST_CALL KavioHostPrepareStop(KavioHostHandle host);
 
-/* ����ʵ�֣�ֹͣҵ���������غ�Ӧ�����������µ� Device ���ݡ� */
+/* 必须实现：停止业务工作。返回后不应再主动发送新的 Device 数据。 */
 KavioResult KAVIO_HOST_CALL KavioHostStop(KavioHostHandle host);
 
-/* ����ʵ�֣��ͷ��� KavioHostCreate ���������ʵ���� */
+/* 必须实现：释放由 KavioHostCreate 创建的组件实例。 */
 void KAVIO_HOST_CALL KavioHostDestroy(KavioHostHandle host);
 
 /*
- * ����ʵ�֣����յ�ǰ App �� Device Component ������һ������ԭʼ���ݱ���
- * data �� KavioAppHost ���У�ֻ�ڱ��ε����ڼ���Ч����Ҫ�첽ʹ��ʱ�������п�����
+ * 必须实现：接收当前 App 的 Device Component 发来的一条完整原始数据报。
+ * data 由 KavioAppHost 持有，只在本次调用期间有效；需要异步使用时必须自行拷贝。
  */
 KavioResult KAVIO_HOST_CALL KavioHostOnData(
     KavioHostHandle host,
@@ -176,16 +176,16 @@ KavioResult KAVIO_HOST_CALL KavioHostOnData(
     size_t size);
 
 /*
- * ��ѡʵ�֣��Զ� Device Endpoint ������֪ͨ��
- * online �� 0 ��ʾ��ǰ�Ѿ߱�˫��ͨ��������Ϊ 0 ʱ���üٶ� Device Component �ɽ������ݡ�
+ * 可选实现：对端 Device Endpoint 上下线通知。
+ * online 非 0 表示当前已具备双向通信条件；为 0 时不得假定 Device Component 可接收数据。
  */
 void KAVIO_HOST_CALL KavioHostOnDeviceState(
     KavioHostHandle host,
     uint32_t online);
 
 /*
- * ��ѡʵ�֣��� Host Component �Լ��ṩ�� App Panel��
- * DLL δ�����÷���ʱ��KavioAppHost ��Ϊ�� App û�� Host Panel��
+ * 可选实现：打开 Host Component 自己提供的 App Panel。
+ * DLL 未导出该符号时，KavioAppHost 认为该 App 没有 Host Panel。
  */
 KavioResult KAVIO_HOST_CALL KavioHostOpenPanel(KavioHostHandle host);
 
