@@ -271,13 +271,6 @@ public:
                 }
                 break;
             }
-            case kavio::ipc::proto::MSG_P2A_RSP_QUERY_STATS: {
-                if (!message.payload().has_p2a_rsp_query_stats()) break;
-                std::lock_guard<std::mutex> lock(pending_mutex_);
-                latest_stats_ = message.payload().p2a_rsp_query_stats();
-                stats_ready_ = true;
-                break;
-            }
             case kavio::ipc::proto::MSG_P2A_REQ_SET_APP_CONFIG:
                 // KavioClient has already validated and atomically committed the new value.
                 // Defer applying it to the LVGL UI thread.
@@ -350,7 +343,6 @@ private:
         schema_state_label_ = nullptr;
         schema_value_label_ = nullptr;
         runtime_summary_label_ = nullptr;
-        runtime_stats_label_ = nullptr;
         wave_bars_.fill(nullptr);
     }
 
@@ -760,11 +752,6 @@ private:
         CreateLabel(summary, "SESSION SNAPSHOT", 18, 14, 240, 24, 0x7F9BB9, &lv_font_montserrat_16);
         runtime_summary_label_ = CreateLabel(summary, "Loading...", 18, 48, 630, 148, 0xF5F8FC, &lv_font_montserrat_16);
 
-        lv_obj_t* stats = CreateCard(lv_screen_active(), 28, 306, 676, 326, 0x111F32);
-        CreateLabel(stats, "PLATFORM STATISTICS", 18, 14, 240, 24, 0x7F9BB9, &lv_font_montserrat_16);
-        CreateButton(stats, "QUERY", 518, 12, 132, 42, QueryStats, this);
-        runtime_stats_label_ = CreateLabel(stats, "Press QUERY to request the latest Platform statistics.",
-                                           18, 56, 630, 238, 0xDDEBFA, &lv_font_montserrat_16);
     }
 
     void UpdateVisiblePage()
@@ -997,33 +984,6 @@ private:
             lv_label_set_text(runtime_summary_label_, text);
         }
 
-        if (runtime_stats_label_) {
-            kavio::KavioClient::StatsReply stats;
-            bool ready = false;
-            {
-                std::lock_guard<std::mutex> lock(pending_mutex_);
-                ready = stats_ready_;
-                if (ready) stats = latest_stats_;
-            }
-            if (ready && stats.has_global()) {
-                const auto& global = stats.global();
-                char text[512]{};
-                std::snprintf(text, sizeof(text),
-                              "Sessions: %u / %u\nInput: %ux%u @ %u fps\nOutput: %ux%u @ %u fps\n"
-                              "RX frames: %llu\nTX frames: %llu\nPublished: %llu\nDropped publish: %llu\n"
-                              "Signal lost / restored: %llu / %llu",
-                              global.current_session_count(), global.max_session_count(),
-                              global.current_input_width(), global.current_input_height(), global.current_input_fps(),
-                              global.current_output_width(), global.current_output_height(), global.current_output_fps(),
-                              static_cast<unsigned long long>(global.rx_frames()),
-                              static_cast<unsigned long long>(global.tx_frames()),
-                              static_cast<unsigned long long>(global.published_frames()),
-                              static_cast<unsigned long long>(global.dropped_publish_count()),
-                              static_cast<unsigned long long>(global.signal_lost_count()),
-                              static_cast<unsigned long long>(global.signal_restore_count()));
-                lv_label_set_text(runtime_stats_label_, text);
-            }
-        }
     }
 
     void ProcessPendingWork()
@@ -1778,15 +1738,6 @@ private:
         }
     }
 
-    static void QueryStats(lv_event_t* e)
-    {
-        if (auto* s = Self(e)) {
-            uint64_t request_id = 0;
-            const kavio::Status status = s->client_.QueryStats(request_id);
-            if (!status.ok() && s->runtime_stats_label_)
-                lv_label_set_text(s->runtime_stats_label_, status.message.c_str());
-        }
-    }
 
     kavio::KavioClient client_;
     kavio::LvglAppViewAdapter view_;
@@ -1807,8 +1758,6 @@ private:
         kavio::ipc::proto::EncodedStreamShmInfoPb info;
     };
     std::deque<PendingH264Open> pending_h264_infos_;
-    bool stats_ready_ = false;
-    kavio::KavioClient::StatsReply latest_stats_;
     uint64_t protocol_errors_ = 0;
     uint64_t transfer_packets_ = 0;
     uint64_t transfer_bytes_ = 0;
@@ -1884,7 +1833,6 @@ private:
     lv_obj_t* schema_state_label_ = nullptr;
     lv_obj_t* schema_value_label_ = nullptr;
     lv_obj_t* runtime_summary_label_ = nullptr;
-    lv_obj_t* runtime_stats_label_ = nullptr;
     std::array<lv_obj_t*, 16> wave_bars_{};
     bool render_paused_ = false;
     uint64_t render_frames_ = 0;

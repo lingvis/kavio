@@ -269,9 +269,6 @@ class IPCClient:
         return self._send(proto.MSG_A2P_REQ_DESTROY_ENCODE_STREAM,
                           proto.A2PReqDestroyEncodeStreamPb(stream_id=stream_id))
 
-    def query_stats(self, all_sessions: bool = False) -> int:
-        return self._send(proto.MSG_A2P_REQ_QUERY_STATS,
-                          proto.A2PReqQueryStatsPb(all_sessions=all_sessions))
 
     def query_runtime_data(self) -> int:
         return self._send(proto.MSG_A2P_REQ_QUERY_RUNTIME_DATA, proto.A2PReqQueryRuntimeDataPb())

@@ -195,7 +195,6 @@ Kavio App
 - Keyboard / Mouse Input；
 - USB Channel；
 - App Configuration；
-- Runtime Stats。
 
 AI、GPIO 以及更多硬件能力属于 Kavio 的平台能力方向，公开 App API 会随着对应能力稳定后逐步纳入 SDK。
 
@@ -265,7 +264,6 @@ Kavio App 可以把视频输入、视频输出、Windows 数据和输入控制�
 | Host / Device 通信 | App 专用 USB Channel |
 | Runtime Data | RX、TX、输入等运行状态 |
 | App Configuration | 必需 Schema 文件；SDK 管理完整配置 GET/SET 与持久化 |
-| Runtime Stats | 运行统计查询 |
 | H.264 公共编码流 | 订阅、打开编码流 SHM、读取数据包 |
 | Device App | C++17 / Python |
 | Windows Host | x64 DLL / C ABI / App Panel |

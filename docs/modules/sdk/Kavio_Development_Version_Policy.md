@@ -13,7 +13,7 @@ major.minor.patch
 ```cpp
 #define KAVIO_SDK_VERSION_MAJOR 3
 #define KAVIO_SDK_VERSION_MINOR 0
-#define KAVIO_SDK_VERSION_PATCH 0
+#define KAVIO_SDK_VERSION_PATCH 1
 ```
 
 `KAVIO_SDK_VERSION_STRING` 由上述三个字段自动生成，不再单独维护 `KAVIO_SDK_COMPAT_VERSION` 或其他 SDK 兼容版本号。

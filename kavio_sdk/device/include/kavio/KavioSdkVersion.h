@@ -17,7 +17,7 @@
 // SDK version: used for client / Platform IPC compatibility.
 #define KAVIO_SDK_VERSION_MAJOR 3
 #define KAVIO_SDK_VERSION_MINOR 0
-#define KAVIO_SDK_VERSION_PATCH 0
+#define KAVIO_SDK_VERSION_PATCH 1
 
 // Public App package / configuration format versions.
 // Shared by the packaging tools, Platform and Windows host.

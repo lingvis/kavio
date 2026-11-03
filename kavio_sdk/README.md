@@ -135,7 +135,6 @@ Python 使用 `from kavio_sdk import app_logger`。App 日志只写本地文件�
 | 输入事件 | `SendInputEvent` | 发送键盘、鼠标事件 |
 | USB Channel | `SendCommChannelData` | 向同一 App 的 Host Component 发送业务数据 |
 | App 配置 | `GetAppConfig` / `UpdateAppConfig` | SDK 自动处理 GET/SET；成功 SET 通过 `OnMessage` 通知业务代码 |
-| 运行统计 | `QueryStats` | 查询当前运行统计信息 |
 
 Host 与 Device 的业务消息应通过 USB Channel 传输。C++ Device API 支持发送 **1 字节到 1 MiB** 的单条完整数据报。
 
@@ -216,7 +215,7 @@ major.minor.patch
 当前源码版本：
 
 ```text
-3.0.0
+3.0.1
 ```
 
 Kavio Runtime 在 Device Component 建立连接时检查 SDK 版本是否满足设备端最低接入版本。App 应使用与目标设备软件版本匹配的 SDK 构建。

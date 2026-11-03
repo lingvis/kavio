@@ -31,7 +31,6 @@ device/
 | Input | 发送键盘和鼠标事件 |
 | USB Channel | 与同一 App 的 Windows Host Component 双向传输业务数据 |
 | App Configuration | 接收配置读写请求并返回处理结果 |
-| Stats | 查询 Device 运行统计 |
 
 当前公开像素格式定义包括：
 
@@ -252,7 +251,7 @@ TX 支持：
 - 多个 TX Surface；
 - App 级 `z_order`。
 
-平台允许的同时 TX Surface 数量由设备 Runtime 配置决定，可通过运行统计查询，不应在 App 中写死平台上限。
+平台允许的同时 TX Surface 数量由 Session 创建应答中的 `max_tx_shms_per_session` 返回，App 不应写死平台上限。
 
 销毁时调用 `surface.Destroy(request_id)` 异步提交远端销毁请求，等待 `OnMessage()` 返回相应状态；本地析构不等于远端资源已销毁。
 
@@ -350,7 +349,6 @@ GetRuntimeData()
 GetRxInfo()
 IsUSBHostOnline()
 IsCommChannelReady()
-QueryStats(request_id)     // 异步：结果通过 MSG_P2A_RSP_QUERY_STATS 返回
 ```
 
 H.264 通过 `SubscribeH264Stream(request_id)` 异步订阅公共流，收到 `MSG_P2A_RSP_CREATE_ENCODE_STREAM` 后调用 `OpenH264Stream(info)` 打开只读 SHM，再通过 `GetLatestH264PacketSeq()` / `ReadH264Packet()` 读取编码数据。编码参数由 Platform 统一决定，SDK 不设置公共 H.264 分辨率、帧率、码率或 GOP。
@@ -460,7 +458,7 @@ include/kavio/KavioSdkVersion.h
 当前版本：
 
 ```text
-3.0.0
+3.0.1
 ```
 
 Python 的 `sdk_version.py` 由同一版本头自动生成。

@@ -1643,16 +1643,6 @@ Status KavioClient::CloseSession(uint32_t session_id, uint64_t& request_id) {
     return st;
 }
 
-Status KavioClient::QueryStats(uint64_t& request_id) {
-    if (!impl_->IsSessionReady())
-        return Status::Error(StatusCode::Common_NotConnected, "client is not ready");
-    auto id = impl_->AllocTrackId();
-    auto req = MakePackage(kavio::ipc::proto::MSG_A2P_REQ_QUERY_STATS, id);
-    req.mutable_payload()->mutable_a2p_req_query_stats()->set_all_sessions(false);
-    auto st = impl_->SendPacket(req);
-    if (st.ok()) request_id = id;
-    return st;
-}
 
 Status KavioClient::SubscribeH264Stream(uint64_t& request_id) {
     if (!impl_->IsSessionReady())

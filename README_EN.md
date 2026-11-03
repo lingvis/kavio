@@ -195,7 +195,6 @@ Runs on the Kavio device and implements the main application logic. The current 
 - keyboard and mouse input events;
 - USB Channel;
 - App Configuration;
-- Runtime Stats.
 
 AI, GPIO, and additional hardware services are part of the broader Kavio platform capability direction. Public App APIs are added as those capability contracts become stable.
 
@@ -265,7 +264,6 @@ A Kavio App can combine video input, video output, Windows-side data, and input 
 | Host / Device communication | App-specific USB Channel |
 | Runtime Data | RX, TX, input, and device state |
 | App Configuration | required Schema file; SDK-managed JSON GET/SET and persistence |
-| Runtime Stats | runtime statistics |
 | Shared H.264 encoded stream | subscribe and read packets from shared memory |
 | Device App | C++17 / Python |
 | Windows Host | x64 DLL / C ABI / App Panel |

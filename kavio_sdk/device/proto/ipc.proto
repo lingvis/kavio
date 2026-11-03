@@ -79,10 +79,6 @@ enum MessageTypePb {
   MSG_P2A_RSP_RUNTIME_DATA = 44;
   // P2A Runtime 状态主动广播，track_id=0。
   MSG_P2A_NTF_RUNTIME_DATA = 45;
-  // A2P 查询统计信息。
-  MSG_A2P_REQ_QUERY_STATS = 50;
-  // P2A 返回统计快照。
-  MSG_P2A_RSP_QUERY_STATS = 51;
   // A2P 订阅编码流。
   MSG_A2P_REQ_CREATE_ENCODE_STREAM = 60;
   // P2A 返回编码流 SHM 信息。
@@ -240,9 +236,6 @@ message P2ARspErrorPb {
   string message = 4;
 }
 
-message A2PReqQueryStatsPb {
-  bool all_sessions = 1;
-}
 
 message A2PReqQueryRuntimeDataPb {
 }
@@ -261,66 +254,6 @@ message A2PReqCloseSessionPb {
   uint32 session_id = 1;
 }
 
-message GlobalRuntimeStatsPb {
-  uint32 current_session_count = 1;
-  uint32 max_session_count = 2;
-  uint32 current_input_width = 3;
-  uint32 current_input_height = 4;
-  uint32 current_output_width = 5;
-  uint32 current_output_height = 6;
-  uint32 current_input_fps = 7;
-  uint32 current_output_fps = 8;
-  uint64 rx_frames = 9;
-  uint64 tx_frames = 10;
-  uint64 published_frames = 11;
-  uint64 dropped_publish_count = 12;
-  uint64 resolution_change_count = 13;
-  uint64 signal_lost_count = 14;
-  uint64 signal_restore_count = 15;
-}
-
-message FrameBrokerStatsPb {
-  uint64 total_frames_published = 1;
-  uint64 total_session_publish_ok = 2;
-  uint64 total_session_publish_drop = 3;
-  uint64 total_session_publish_skip = 4;
-}
-
-message OverlayManagerStatsPb {
-  uint64 total_snapshot_requests = 1;
-  uint64 total_layers_returned = 2;
-  uint64 total_layers_skipped = 3;
-}
-
-message TxRendererStatsPb {
-  uint64 total_render_calls = 1;
-  uint64 total_layers_submitted = 2;
-  uint64 total_layers_skipped = 3;
-  uint64 total_submit_errors = 4;
-}
-
-message SessionStatsPb {
-  uint32 session_id = 1;
-  int32 z_order = 2;
-  bool rx_stream_enable = 3;
-  bool tx_stream_enable = 4;
-  uint64 connect_time_ms = 5;
-  string client_name = 6;
-  uint64 rx_frames_written = 7;
-  uint64 tx_updates_seen = 8;
-  uint64 dropped_rx_frames = 9;
-  uint64 dropped_tx_updates = 10;
-  uint32 rx_frame_sample_interval = 11;
-  int32 client_pid = 12;
-}
-
-message P2ARspQueryStatsPb {
-  GlobalRuntimeStatsPb global = 1;
-  FrameBrokerStatsPb frame_broker = 2;
-  OverlayManagerStatsPb overlay_manager = 3;
-  TxRendererStatsPb tx_renderer = 4;
-  repeated SessionStatsPb sessions = 5;
-}
 
 enum VideoCodecPb {
   VIDEO_CODEC_UNKNOWN = 0;
@@ -481,8 +414,6 @@ message IPCPayloadPb {
     A2PReqQueryRuntimeInputPb a2p_req_query_runtime_input = 43;  // MSG_A2P_REQ_QUERY_RUNTIME_INPUT
     kavio.runtime.proto.RuntimeDataPb p2a_rsp_runtime_data = 44;  // MSG_P2A_RSP_RUNTIME_DATA
     kavio.runtime.proto.RuntimeDataPb p2a_ntf_runtime_data = 45;  // MSG_P2A_NTF_RUNTIME_DATA
-    A2PReqQueryStatsPb a2p_req_query_stats = 50;  // MSG_A2P_REQ_QUERY_STATS
-    P2ARspQueryStatsPb p2a_rsp_query_stats = 51;  // MSG_P2A_RSP_QUERY_STATS
     A2PReqCreateEncodeStreamPb a2p_req_create_encode_stream = 60;  // MSG_A2P_REQ_CREATE_ENCODE_STREAM
     P2ARspCreateEncodeStreamPb p2a_rsp_create_encode_stream = 61;  // MSG_P2A_RSP_CREATE_ENCODE_STREAM
     A2PReqDestroyEncodeStreamPb a2p_req_destroy_encode_stream = 62;  // MSG_A2P_REQ_DESTROY_ENCODE_STREAM

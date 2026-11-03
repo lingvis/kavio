@@ -145,7 +145,6 @@ public:
 class KavioClient {
 public:
     using RuntimeData = kavio::runtime::proto::RuntimeDataPb;
-    using StatsReply = kavio::ipc::proto::P2ARspQueryStatsPb;
 
     KavioClient();
     ~KavioClient();
@@ -256,12 +255,6 @@ public:
      */
     Status CloseSession(uint32_t session_id, uint64_t& request_id);
 
-    /**
-     * @brief 异步查询 Platform 运行统计。
-     * @param[out] request_id IPC track_id。@return 本地发送结果。
-     * @note MSG_P2A_RSP_QUERY_STATS 携带统计结果。
-     */
-    Status QueryStats(uint64_t& request_id);
 
     /**
      * @brief 发送键盘或鼠标输入事件（不等待确认）。
