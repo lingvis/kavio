@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import math
 from functools import lru_cache
@@ -17,54 +16,7 @@ import sys
 import zipfile
 
 TOOLS_DIR = Path(__file__).resolve().parent
-SDK_ROOT = TOOLS_DIR.parents[1] / "kavio_sdk" / "device"
-APP_MANIFEST_BINDING = SDK_ROOT / "py" / "kavio_sdk" / "proto_py" / "app_manifest_pb2.py"
-
-try:
-    from google.protobuf.json_format import MessageToJson
-except ImportError as exc:
-    raise RuntimeError(
-        "Kavio packaging requires the Python protobuf runtime; install protobuf>=3.20.3"
-    ) from exc
-
-
-def load_app_manifest_binding():
-    if not APP_MANIFEST_BINDING.is_file():
-        raise RuntimeError(
-            f"Kavio packaging protobuf binding is missing: {APP_MANIFEST_BINDING}; "
-            "build kavio_sdk/device first"
-        )
-    spec = importlib.util.spec_from_file_location(
-        "kavio_app_manifest_pb2", APP_MANIFEST_BINDING
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(
-            f"cannot load Kavio packaging protobuf binding: {APP_MANIFEST_BINDING}"
-        )
-    module = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    except ModuleNotFoundError as exc:
-        if exc.name and exc.name.startswith("google.protobuf"):
-            raise RuntimeError(
-                "Kavio packaging protobuf runtime is missing or incompatible; "
-                "install protobuf>=3.20.3"
-            ) from exc
-        raise RuntimeError(
-            f"failed to load Kavio packaging protobuf binding "
-            f"{APP_MANIFEST_BINDING}: {exc}"
-        ) from exc
-    except Exception as exc:
-        raise RuntimeError(
-            f"failed to load Kavio packaging protobuf binding "
-            f"{APP_MANIFEST_BINDING}: {exc}"
-        ) from exc
-    return module
-
-
-app_manifest_pb2 = None # loaded only for packaging, not for status/help
-
-PACKAGE_CONFIG_NAME = "kavio_package.json"
+PACKAGE_CONFIG_NAME = "package_input.json"
 PACKAGE_CONFIG_VERSION = 1
 GENERATED_FILE_NAMES = {"manifest.json", "signature.json"}
 APP_ICON_MAX_WIDTH = 512
@@ -121,12 +73,17 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def append_file_entry(manifest: app_manifest_pb2.AppManifestPb,
-                      path: Path, package_path: str) -> None:
-    entry = manifest.files.add()
-    entry.path = package_path
-    entry.size = path.stat().st_size
-    entry.sha256 = sha256(path)
+def append_file_entry(manifest: dict[str, object], path: Path, package_path: str) -> None:
+    files = manifest.setdefault("files", [])
+    assert isinstance(files, list)
+    # AppManifestPb.files.size is uint64. Canonical protobuf JSON encodes uint64
+    # values as decimal strings, so keep that representation without requiring
+    # generated Python protobuf bindings in the source tree.
+    files.append({
+        "path": package_path,
+        "size": str(path.stat().st_size),
+        "sha256": sha256(path),
+    })
 
 
 def require_object(value: object, field: str) -> dict[str, object]:
@@ -503,7 +460,7 @@ def validate_schema_description_content(config_definition: dict[str, object]) ->
 
 
 def parse_manifest(config: dict[str, object], source_dir: Path,
-                   package_paths: set[str]) -> app_manifest_pb2.AppManifestPb:
+                   package_paths: set[str]) -> dict[str, object]:
     config_allowed = {
         "packageConfigVersion", "appId", "version", "name", "description",
         "device", "host",
@@ -520,18 +477,22 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
             f"unsupported packageConfigVersion={config_version}; expected {PACKAGE_CONFIG_VERSION}"
         )
 
-    manifest = app_manifest_pb2.AppManifestPb()
-    manifest.manifest_version = current_manifest_version()
-    manifest.app_id = require_string(config.get("appId"), "appId")
-    validate_app_id(manifest.app_id)
-    manifest.version = require_string(config.get("version"), "version")
-    manifest.name = require_string(config.get("name"), "name")
-    manifest.description = optional_string(config.get("description"), "description")
+    app_id = require_string(config.get("appId"), "appId")
+    validate_app_id(app_id)
+    manifest: dict[str, object] = {
+        "manifestVersion": current_manifest_version(),
+        "appId": app_id,
+        "version": require_string(config.get("version"), "version"),
+        "name": require_string(config.get("name"), "name"),
+        "icon": "icon.png",
+        "device": {},
+        "files": [],
+    }
+    description = optional_string(config.get("description"), "description")
+    if description:
+        manifest["description"] = description
 
-    # Fixed package convention: every App icon is package/icon.png in the source
-    # project and icon.png at the root of the generated .kap package.
-    manifest.icon = "icon.png"
-    validate_app_icon(source_path(source_dir, manifest.icon, "icon.png"), "icon.png")
+    validate_app_icon(source_path(source_dir, "icon.png", "icon.png"), "icon.png")
 
     device = require_object(config.get("device"), "device")
     device_allowed = {"runtime", "entry", "arguments", "python"}
@@ -544,16 +505,22 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
     if not device_source.is_dir() or device_source.is_symlink():
         raise PackageError("device output directory must be a real directory")
 
-    device_manifest = manifest.device
-    device_manifest.runtime = require_string(device.get("runtime", "native"), "device.runtime")
-    if device_manifest.runtime not in ("native", "python"):
+    runtime = require_string(device.get("runtime", "native"), "device.runtime")
+    if runtime not in ("native", "python"):
         raise PackageError("device.runtime must be 'native' or 'python'")
-    device_entry_relative = normalize_relative_path(device.get("entry"), "device.entry")
-    device_manifest.entry = join_package_path("device", device_entry_relative, "device.entry")
-    device_manifest.arguments.extend(require_string_list(device.get("arguments", []), "device.arguments"))
-    # Package metadata can no longer request automatic startup. Newly installed Apps
+    entry = join_package_path(
+        "device",
+        normalize_relative_path(device.get("entry"), "device.entry"),
+        "device.entry",
+    )
+    arguments = require_string_list(device.get("arguments", []), "device.arguments")
+    device_manifest: dict[str, object] = {"runtime": runtime, "entry": entry}
+    if arguments:
+        device_manifest["arguments"] = arguments
+    manifest["device"] = device_manifest
 
-    if device_manifest.runtime == "python":
+    python_paths: list[tuple[str, str]] = []
+    if runtime == "python":
         python_config = require_object(device.get("python"), "device.python")
         python_allowed = {
             "pythonVersion", "installMode", "environmentArchive",
@@ -565,14 +532,18 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
                 "device.python contains unsupported fields: "
                 + ", ".join(sorted(python_unknown))
             )
-        python_manifest = device_manifest.python
-        python_manifest.python_version = optional_string(
+        python_manifest: dict[str, object] = {}
+        python_version = optional_string(
             python_config.get("pythonVersion"), "device.python.pythonVersion")
-        python_manifest.install_mode = require_string(
+        if python_version:
+            python_manifest["pythonVersion"] = python_version
+        install_mode = require_string(
             python_config.get("installMode", "auto"), "device.python.installMode")
-        for config_key, proto_field in (
-            ("environmentArchive", "environment_archive"),
-            ("environmentDefinition", "environment_definition"),
+        if install_mode:
+            python_manifest["installMode"] = install_mode
+        for config_key, json_key in (
+            ("environmentArchive", "environmentArchive"),
+            ("environmentDefinition", "environmentDefinition"),
             ("requirements", "requirements"),
         ):
             value = normalize_relative_path(
@@ -584,16 +555,16 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
                 join_package_path("device", value, f"device.python.{config_key}")
                 if value else ""
             )
-            setattr(python_manifest, proto_field, package_value)
-        if not any((
-            python_manifest.environment_archive,
-            python_manifest.environment_definition,
-            python_manifest.requirements,
-        )):
+            if package_value:
+                python_manifest[json_key] = package_value
+                python_paths.append((package_value, f"device.python.{config_key}"))
+        if not python_paths:
             raise PackageError("Python applications require at least one environment input")
+        device_manifest["python"] = python_manifest
     elif "python" in device:
         raise PackageError("device.python is valid only when device.runtime is 'python'")
 
+    host_binary = ""
     host_value = config.get("host")
     if host_value is not None:
         host = require_object(host_value, "host")
@@ -606,29 +577,27 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
         host_source = source_path(source_dir, "host", "host output directory")
         if not host_source.is_dir() or host_source.is_symlink():
             raise PackageError("host output directory must be a real directory")
-        host_binary_relative = normalize_relative_path(host.get("binary"), "host.binary")
-        manifest.host.binary = join_package_path("host", host_binary_relative, "host.binary")
-        manifest.host.panel = require_bool(host.get("panel", False), "host.panel")
+        host_binary = join_package_path(
+            "host",
+            normalize_relative_path(host.get("binary"), "host.binary"),
+            "host.binary",
+        )
+        host_manifest: dict[str, object] = {"binary": host_binary}
+        panel = require_bool(host.get("panel", False), "host.panel")
+        if panel:
+            host_manifest["panel"] = True
+        manifest["host"] = host_manifest
 
-    # Schema description is mandatory at the fixed package root path, including
-    # applications without configurable values (represented by {}).
     validate_schema_description(source_dir)
 
     referenced_paths: list[tuple[str, str]] = [
-        (device_manifest.entry, "device.entry"),
-        (manifest.icon, "icon.png"),
+        (entry, "device.entry"),
+        ("icon.png", "icon.png"),
         (SCHEMA_DESCRIPTION_PATH, "schema_description.json"),
     ]
-    if manifest.HasField("host"):
-        referenced_paths.append((manifest.host.binary, "host.binary"))
-    if device_manifest.runtime == "python":
-        for value, field in (
-            (device_manifest.python.environment_archive, "device.python.environmentArchive"),
-            (device_manifest.python.environment_definition, "device.python.environmentDefinition"),
-            (device_manifest.python.requirements, "device.python.requirements"),
-        ):
-            if value:
-                referenced_paths.append((value, field))
+    if host_binary:
+        referenced_paths.append((host_binary, "host.binary"))
+    referenced_paths.extend(python_paths)
 
     for package_path, field in referenced_paths:
         if package_path not in package_paths:
@@ -637,16 +606,11 @@ def parse_manifest(config: dict[str, object], source_dir: Path,
     return manifest
 
 
-def serialize_manifest_json(manifest: app_manifest_pb2.AppManifestPb) -> bytes:
-    # manifest.json is the canonical protobuf JSON representation of AppManifestPb.
-    # Field names, scalar encoding and message layout therefore come only from
-    # app_manifest.proto, not from a second hand-maintained JSON structure definition.
-    return MessageToJson(
-        manifest,
-        preserving_proto_field_name=False,
-        indent=2,
-        sort_keys=False,
-    ).encode("utf-8")
+def serialize_manifest_json(manifest: dict[str, object]) -> bytes:
+    # manifest.json follows the protobuf JSON field names defined by
+    # app_manifest.proto. uint64 file sizes are stored as decimal strings to
+    # match canonical protobuf JSON representation.
+    return (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 
 def main() -> int:
@@ -692,9 +656,6 @@ def main() -> int:
             raise PackageError(f"read {PACKAGE_CONFIG_NAME} failed: {exc}") from exc
         config = require_object(config_data, PACKAGE_CONFIG_NAME)
 
-        global app_manifest_pb2
-        app_manifest_pb2 = load_app_manifest_binding()
-
         package_files = collect_package_files(source_dir, config_path, output_path)
         package_paths = {package_path for _, package_path in package_files}
         manifest = parse_manifest(config, source_dir, package_paths)
@@ -718,9 +679,9 @@ def main() -> int:
             raise
 
         print(f"Created unsigned development package: {output_path}")
-        print(f"app_id: {manifest.app_id}")
+        print(f"app_id: {manifest['appId']}")
         print(f"files: {len(package_files)}")
-        if manifest.HasField("host"):
+        if "host" in manifest:
             print("Enable both Host development mode and Device development mode before installation.")
         else:
             print("Enable Device development mode before installing this unsigned device-only package.")

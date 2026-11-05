@@ -212,7 +212,7 @@ void OnStarted() {
 
 AppHost 加载 DLL 后自动调用 `KavioHostInitLogging()`，DLL 内部打开自己的文件；卸载前自动调用 `KavioHostShutdownLogging()`。开发者无需显式调用 `Logger::Init()`，也不需要处理日志回调。按 **UTC 自然日** 切割为 `HostComponent_YYYYMMDD_HHMMSS_mmm_pid.log`，历史保留 72 小时，不按大小轮转。
 
-`KavioHostApi::log` 已删除；请使用 `KLOGT/KLOGD/KLOGI/KLOGW/KLOGE/KLOGC`。旧 Host DLL 需要重新编译。
+Host Component 使用 `KLOGT/KLOGD/KLOGI/KLOGW/KLOGE/KLOGC` 写本地日志；DLL 必须按当前 `KavioHost.h` ABI 编译。
 
 请阅读 [统一日志模块完整设计](../../docs/modules/sdk/Kavio_Logging_Design.md)。
 
@@ -289,7 +289,7 @@ KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostOnData(
 Kavio App Demo 约定最终 Host DLL 暂存为：
 
 ```text
-<app>/output/host/host.dll
+build/apps/<project path>/host/host.dll
 ```
 
 再由 `kavio_app` 打包工具和 Device Component 一起生成 `.kap`。
@@ -297,7 +297,7 @@ Kavio App Demo 约定最终 Host DLL 暂存为：
 完整 Host 示例：
 
 ```text
-kavio_app/sdk_showcase
+kavio_app/KavioDemo
 ```
 
-其中 `sdk_showcase/common/DemoProtocol.h` 只由该 Demo 的 Host/Device Component 共享，不属于 Host SDK ABI。
+其中 `KavioDemo/common/DemoProtocol.h` 只由该 Demo 的 Host/Device Component 共享，不属于 Host SDK ABI。

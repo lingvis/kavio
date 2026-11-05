@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kavio.local/schema/kavio_project.schema.json",
+  "title": "Kavio App Project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "projectVersion",
+    "language",
+    "package"
+  ],
+  "properties": {
+    "projectVersion": {
+      "const": 1
+    },
+    "language": {
+      "enum": [
+        "cpp",
+        "python",
+        "lua"
+      ]
+    },
+    "sdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "modules": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "ui"
+            ]
+          }
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appId",
+        "version",
+        "name",
+        "description",
+        "device"
+      ],
+      "properties": {
+        "appId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runtime",
+            "entry",
+            "arguments"
+          ],
+          "properties": {
+            "runtime": {
+              "enum": [
+                "native",
+                "python"
+              ]
+            },
+            "entry": {
+              "type": "string",
+              "minLength": 1
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "python": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [],
+              "properties": {
+                "pythonVersion": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "installMode": {
+                  "enum": [
+                    "archive",
+                    "online",
+                    "auto"
+                  ]
+                },
+                "environmentArchive": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "environmentDefinition": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "requirements": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "anyOf": [
+                {
+                  "required": [
+                    "environmentArchive"
+                  ]
+                },
+                {
+                  "required": [
+                    "environmentDefinition"
+                  ]
+                },
+                {
+                  "required": [
+                    "requirements"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "binary",
+            "panel"
+          ],
+          "properties": {
+            "binary": {
+              "type": "string",
+              "minLength": 1
+            },
+            "panel": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "language": {
+            "const": "cpp"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "package": {
+            "properties": {
+              "device": {
+                "properties": {
+                  "runtime": {
+                    "const": "native"
+                  }
+                },
+                "not": {
+                  "required": [
+                    "python"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "language": {
+            "const": "python"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "build": {
+            "not": {
+              "required": [
+                "target"
+              ]
+            }
+          },
+          "package": {
+            "properties": {
+              "device": {
+                "required": [
+                  "python"
+                ],
+                "properties": {
+                  "runtime": {
+                    "const": "python"
+                  },
+                  "entry": {
+                    "pattern": "\\.py$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "language": {
+            "const": "lua"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "build": {
+            "not": {
+              "required": [
+                "target"
+              ]
+            }
+          },
+          "package": {
+            "properties": {
+              "device": {
+                "properties": {
+                  "runtime": {
+                    "const": "native"
+                  },
+                  "entry": {
+                    "const": "kavio_lua_runner"
+                  },
+                  "arguments": {
+                    "minItems": 1,
+                    "prefixItems": [
+                      {
+                        "type": "string",
+                        "pattern": "\\.lua$"
+                      }
+                    ]
+                  }
+                },
+                "not": {
+                  "required": [
+                    "python"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

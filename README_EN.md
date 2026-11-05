@@ -175,7 +175,8 @@ Every Kavio App contains at least a Device Component:
 Kavio App
 ├── Device Component                 required
 │   ├── Native C++ executable
-│   └── or Python script
+│   ├── Python script
+│   └── Lua 5.4 script via SDK runner
 │
 ├── Host Component                   optional
 │   └── Windows x64 DLL
@@ -265,7 +266,7 @@ A Kavio App can combine video input, video output, Windows-side data, and input 
 | Runtime Data | RX, TX, input, and device state |
 | App Configuration | required Schema file; SDK-managed JSON GET/SET and persistence |
 | Shared H.264 encoded stream | subscribe and read packets from shared memory |
-| Device App | C++17 / Python |
+| Device App | C++17 / Python 3.10+ / Lua 5.4 |
 | Windows Host | x64 DLL / C ABI / App Panel |
 
 > The public SDK surface is not identical to the full long-term platform capability set. Hardware capabilities are integrated into the platform and Runtime first, then exposed to Apps through stable public contracts.
@@ -300,7 +301,7 @@ Apps should not depend directly on private implementation details in `kavio_plat
 kavio_sdk/device/
 ```
 
-Supports C++ and Python Device Components.
+Supports C++, Python, and Lua 5.4 Device Components.
 
 See [`kavio_sdk/device/README.md`](kavio_sdk/device/README.md).
 
@@ -319,69 +320,53 @@ SDK overview: [`kavio_sdk/README.md`](kavio_sdk/README.md)
 Current configuration contract: [`docs/modules/app/Kavio_App_Configuration_Spec.md`](docs/modules/app/Kavio_App_Configuration_Spec.md).
 Build and packaging guide: [`docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md`](docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md).
 
-## 9. Demo App
+## 9. Templates and KavioDemo
 
-The public repository provides two examples with different purposes:
+`kavio_app/Templates` contains the supported source templates for creating application projects. Templates use `kavio_project.json.template`, so they are intentionally not discovered as buildable Apps.
 
-- `kavio_app/app_frame`: a minimal native C++ App template, App ID `com.kavio.template.app-frame`, intended to be copied when starting a new App;
-- `kavio_app/sdk_showcase`: the integrated Kavio SDK capability showcase, App ID `com.kavio.demo.sdk-showcase`.
-
-The `sdk_showcase` App demonstrates:
-
-- full-screen AppView + LVGL rendering and touch;
-- bidirectional Host ↔ Device USB App Channel communication, configurable 1–1023 KB payloads, integrity checks, and confirmed throughput tests;
-- HDMI RX one-frame read/scaled preview and up to three HDMI TX surfaces, including ~30 Hz movement and a `valid_rect` partial-publish case;
-- separate keyboard and mouse output tests; Keyboard covers A-Z, 0-9, system/navigation/F1-F12 keys, while Mouse maps a touch pad to absolute pointer coordinates and includes click/wheel tests;
-- shared H.264 subscription, SHM packet reads, and raw cache-file capture without playback;
-- Schema-backed configuration read, update, and reset;
-- Runtime Data / Statistics;
-- standard App Configuration;
-- a Windows Host Component and standalone App Panel.
-
-Video playback is intentionally not part of the current public Demo. A future public video playback SDK should define its own contract.
-
-See [`kavio_app/app_frame/README.md`](kavio_app/app_frame/README.md) for the minimal template and [`kavio_app/sdk_showcase/README.md`](kavio_app/sdk_showcase/README.md) for the integrated example.
-
-## 10. Quick start
-
-### 10.1 Build the Device SDK
-
-```bash
-cd kavio_sdk/device
-./build.sh -r
-```
-
-Native Apps link the generated CMake package and do not compile SDK private sources directly.
-
-### 10.2 Build the minimal App Frame Device Component
-
-```bash
-cd kavio_app/app_frame/device
-./build.sh -r
-```
-
-Build `kavio_app/sdk_showcase/device` when you need the integrated SDK capability example.
-
-### 10.3 Build a Host Component
-
-Apps containing `host/` use Visual Studio to build a Windows x64 DLL.
-
-### 10.4 Build a Kavio App Package
-
-Kavio App packages use the `.kap` extension, meaning **Kavio App Package**.
-
-```bash
-cd kavio_app
-python3 kavio_app.py list
-python3 kavio_app.py status app_frame
-python3 kavio_app.py package app_frame
-```
-
-Packages are written to:
+Available templates:
 
 ```text
-kavio_app/<app>/dist/
+C++     framebuffer / kavio_widget / advanced_ui
+Python  framebuffer / kavio_widget
+Lua     framebuffer / kavio_widget
 ```
+
+See [`kavio_app/Templates/README.md`](kavio_app/Templates/README.md).
+
+`kavio_app/KavioDemoCpp`, `kavio_app/KavioDemoPython`, and `kavio_app/KavioDemoLua` are three independent SDK capability/regression projects, each with its own Windows Host component.
+
+## 10. Quick Start
+
+The repository-root `kavio` command is the only public project creation/build/package entry point.
+
+List templates:
+
+```bash
+./kavio new --list
+```
+
+Recommended normal UI start:
+
+```bash
+./kavio new MyApp --template cpp/kavio_widget --app-id com.example.my-app
+./kavio build MyApp --release
+./kavio pack MyApp --release
+```
+
+Use `*/framebuffer` when the application owns the renderer. Use `cpp/advanced_ui` only when C++ requires raw LVGL Chart/Canvas/custom draw beyond the Kavio Widget abstraction.
+
+Project discovery recursively scans only:
+
+```text
+kavio_app/**/kavio_project.json
+```
+
+A template contains `kavio_project.json.template`, so it does not appear in `./kavio list`. `./kavio new` instantiates the template and creates the real descriptor.
+
+Host DLLs are built separately on Windows. If a project declares a Host Component and the PC artifact is missing, `pack` fails; the Device-side `kavio` tool never invokes MSBuild.
+
+See [`docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md`](docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md).
 
 ## 11. Public / Internal boundary
 

@@ -1,0 +1,26 @@
+{
+  "projectVersion": 1,
+  "language": "lua",
+  "sdk": {
+    "modules": [
+      "ui"
+    ]
+  },
+  "package": {
+    "appId": "com.kavio.demo.lua",
+    "version": "1.0.0",
+    "name": "KavioDemo Lua",
+    "description": "KavioDemo Lua demonstrates the public SDK Device, Presentation, Widget, USB, HDMI RX/TX, keyboard/mouse, H.264 and configuration capabilities.",
+    "device": {
+      "runtime": "native",
+      "entry": "kavio_lua_runner",
+      "arguments": [
+        "main.lua"
+      ]
+    },
+    "host": {
+      "binary": "host.dll",
+      "panel": true
+    }
+  }
+}

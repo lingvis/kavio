@@ -175,7 +175,8 @@ flowchart TB
 Kavio App
 ├── Device Component                 required
 │   ├── Native C++ executable
-│   └── or Python script
+│   ├── Python script
+│   └── Lua 5.4 script via SDK runner
 │
 ├── Host Component                   optional
 │   └── Windows x64 DLL
@@ -265,7 +266,7 @@ Kavio App 可以把视频输入、视频输出、Windows 数据和输入控制�
 | Runtime Data | RX、TX、输入等运行状态 |
 | App Configuration | 必需 Schema 文件；SDK 管理完整配置 GET/SET 与持久化 |
 | H.264 公共编码流 | 订阅、打开编码流 SHM、读取数据包 |
-| Device App | C++17 / Python |
+| Device App | C++17 / Python 3.10+ / Lua 5.4 |
 | Windows Host | x64 DLL / C ABI / App Panel |
 
 > 公开 SDK 能力与 Kavio 平台的长期能力范围不是同一个概念。平台能力会先完成硬件抽象和 Runtime 集成，再以稳定接口逐步开放给 App。
@@ -300,7 +301,7 @@ App 不应反向依赖 `kavio_platform` 或 `kavio_win` 的私有实现。
 kavio_sdk/device/
 ```
 
-支持 C++ 和 Python Device Component。
+支持 C++17、Python 3.10+ 和 Lua 5.4 Device Component。
 
 详细说明：[`kavio_sdk/device/README.md`](kavio_sdk/device/README.md)
 
@@ -319,70 +320,55 @@ SDK 总览：[`kavio_sdk/README.md`](kavio_sdk/README.md)
 现行配置规范：[`docs/modules/app/Kavio_App_Configuration_Spec.md`](docs/modules/app/Kavio_App_Configuration_Spec.md)；
 构建与打包：[`docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md`](docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md)。
 
-## 9. Demo App
+## 9. Templates 与 KavioDemo
 
-当前公开仓库提供两个不同定位的示例：
+`kavio_app/Templates` 提供创建业务 App 的正式源模板；模板使用 `kavio_project.json.template`，不会被工程扫描器识别为可编译 App。
 
-- `kavio_app/app_frame`：最小 Native C++ App 模板，App ID 为 `com.kavio.template.app-frame`，用于复制后快速开始新 App；
-- `kavio_app/sdk_showcase`：Kavio SDK 综合能力演示 App，App ID 为 `com.kavio.demo.sdk-showcase`。
+当前模板：
 
-其中 `sdk_showcase` 在一个 App 中演示：
+```text
+C++     framebuffer / kavio_widget / advanced_ui
+Python  framebuffer / kavio_widget
+Lua     framebuffer / kavio_widget
+```
 
-- AppView + LVGL 全屏渲染与触摸；
-- Host ↔ Device USB App Channel 双向通信、1–1023 KB 可配置载荷、完整性校验与确认吞吐率测试；
-- HDMI RX 单帧读取/缩放预览与 HDMI TX 最多 3 个 Surface，包含约 30 Hz 移动和 `valid_rect` Partial 发布示例；
-- 独立 Keyboard 与 Mouse 输入输出测试；Keyboard 覆盖 A–Z、0–9、系统/导航/F1–F12，Mouse 使用触摸区域实时映射绝对坐标并支持左右键/滚轮；
-- H.264 公共流订阅、SHM 数据包读取并保存到 App 缓存目录（不播放）；
-- Schema 配置读取、更新与恢复默认值；
-- Runtime Data / Statistics；
-- 标准 App Configuration；
-- Windows Host Component 与独立 App Panel。
+模板选择指南：[`kavio_app/Templates/README.md`](kavio_app/Templates/README.md)。
 
-视频播放暂不作为公开 Demo 能力；未来若开放正式视频播放 SDK，将单独设计公开契约。
-
-最小模板说明：[`kavio_app/app_frame/README.md`](kavio_app/app_frame/README.md)。
-综合示例说明：[`kavio_app/sdk_showcase/README.md`](kavio_app/sdk_showcase/README.md)。
+`kavio_app/KavioDemoCpp`、`kavio_app/KavioDemoPython`、`kavio_app/KavioDemoLua` 分别提供独立的综合 SDK 能力/回归 App，各自包含 Windows Host 工程。
 
 ## 10. 快速开始
 
-### 10.1 构建 Device SDK
+仓库根目录 `kavio` 是创建、发现、构建和打包 Device App 的唯一正式入口。
+
+先查看模板：
 
 ```bash
-cd kavio_sdk/device
-./build.sh -r
+./kavio new --list
 ```
 
-Native App 通过生成的 CMake package 链接 Device SDK，不直接编译 SDK 私有源码。
-
-### 10.2 构建最小 App Frame Device Component
+普通 UI App 推荐：
 
 ```bash
-cd kavio_app/app_frame/device
-./build.sh -r
+./kavio new MyApp --template cpp/kavio_widget --app-id com.example.my-app
+./kavio build MyApp --release   # 仅编译
+./kavio pack MyApp --release    # 先编译，再打包
+./kavio build_all             # 依次编译所有 App
+./kavio pack_all              # 依次编译并打包所有 App
 ```
 
-需要综合 SDK 功能示例时再构建 `kavio_app/sdk_showcase/device`。
+已有自定义 Renderer 时使用 `*/framebuffer`；C++ 需要 raw LVGL Chart/Canvas/custom draw 时使用 `cpp/advanced_ui`。
 
-### 10.3 构建 Host Component
-
-包含 `host/` 的 App 使用 Visual Studio 构建 Windows x64 DLL。
-
-### 10.4 生成 Kavio App Package
-
-Kavio App 安装包使用 `.kap` 后缀，含义为 **Kavio App Package**。
-
-```bash
-cd kavio_app
-python3 kavio_app.py list
-python3 kavio_app.py status app_frame
-python3 kavio_app.py package app_frame
-```
-
-生成文件位于：
+工程扫描规则固定为递归扫描：
 
 ```text
-kavio_app/<app>/dist/
+kavio_app/**/kavio_project.json
 ```
+
+只有包含**真实 `kavio_project.json`** 的目录才是可构建工程。`Templates` 内只有 `kavio_project.json.template`，因此不会出现在 `./kavio list` 中。`./kavio new` 会将模板实例化为真正的工程文件。
+
+Host DLL 必须在 Windows PC 上单独构建。如果 `kavio_project.json.package` 声明 Host Component，而 PC 构建产物不存在，`pack` 会在完成 Device 构建后报告缺失的 Host DLL。`build_all` 与 `pack_all` 遇到单项目错误仍会继续处理其他项目，并在结束时汇总错误及返回非零状态。设备端 `kavio` 工具不调用 MSBuild。
+
+完整规则见 [`docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md`](docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md)。
 
 ## 11. Public / Internal 边界
 

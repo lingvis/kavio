@@ -85,7 +85,7 @@ KavioWin 与 KavioAppHost 的管道帧不维护独立版本号。
 每条消息仍必须校验 `magic`、`header_size`、`payload_size`，因为这些字段用于确认当前消息边界和读取长度。这属于帧安全校验，不属于版本兼容校验。
 ## 7. App Package / Manifest 格式版本
 
-当前 `kavio_package.json` 的 `packageConfigVersion`、打包工具 `PACKAGE_CONFIG_VERSION` 和 Manifest 的 `KAVIO_MANIFEST_VERSION` 均固定为 `1`。
+当前 `kavio_project.json.projectVersion` 与 Manifest 的 `KAVIO_MANIFEST_VERSION` 均固定为 `1`。打包工具内部输入格式不属于公开工程配置版本。
 
 当前 Package/Manifest 契约尚未作为需要兼容历史包的稳定格式发布，因此：
 

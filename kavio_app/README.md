@@ -1,243 +1,278 @@
-# Kavio App Examples
+# Kavio App Projects and Templates
 
-`kavio_app` 提供可直接编译、运行和打包的 Kavio App 示例，面向需要开发自定义 Kavio App 的开发者。
-
-每个 Demo 一级目录都是一个独立 App，对应一个 `appId` 和一个 `.kap` 安装包；`tools/` 保存公共打包工具。Demo 重点展示 Kavio SDK 的标准开发方式，不要求 App 开发者了解 Windows 与设备之间的底层传输实现。
-
-## 1. App 开发架构
-
-一个 Kavio App 至少包含 Device Component，也可以按需要增加 Host Component、App Configuration 和 App Panel。
+`kavio_app/` contains two different kinds of content:
 
 ```text
-Windows                                      Device
-┌─────────────────────────┐                  ┌─────────────────────────┐
-│ Host Component          │                  │ Device Component        │
-│ Windows x64 DLL         │◄── USB Channel ─►│ Native executable       │
-│                         │                  │ or Python entry script  │
-│ Optional App Panel      │                  │                         │
-└─────────────────────────┘                  │ RX / TX / Input / Config│
-                                             └─────────────────────────┘
+kavio_app/
+├── Templates/      # source templates used by `./kavio new`; not buildable projects
+├── KavioDemoCpp/    # independent C++ demo
+├── KavioDemoPython/ # independent Python demo
+├── KavioDemoLua/    # independent Lua demo
+├── tools/          # project schema and package builder
+└── <YourApp>/      # projects created by developers
 ```
 
-### Device Component
+## 1. What is a buildable Kavio project?
 
-Device Component 是 App 在 Kavio 设备侧运行的主体，当前支持两种形式：
-
-- **Native**：C++ 可执行文件，链接 `kavio_sdk/device` 预先构建的静态库；
-- **Python**：Python 入口脚本，随 App 一起打包 Kavio Python SDK 和运行依赖。
-
-Device Component 可以按业务需要使用：
-
-- RX：读取输入视频帧；
-- TX：创建并更新输出 Surface，用于既有 TX/Overlay 图像通道；
-- **AppView：** 通过独立 BGRA8888 共享画布向设备副屏提交全屏 UI，不使用 TX Overlay Surface；需要 LVGL 时链接可选的 `Kavio::DeviceSdkLvgl` 适配库；
-- Input：发送键盘、鼠标等输入事件；
-- USB Channel：与 Windows Host Component 双向交换 App 自定义数据；
-- App Configuration：通过 SDK 查询、修改完整 JSON 配置。
-
-C++ Demo 使用 `IClientMessageHandler::OnMessage()` 接收 protobuf 消息。业务请求异步提交，
-以 `track_id` 关联响应；收到 TX 创建成功消息后再打开本地共享内存。Python Demo 使用 Python SDK 的
-`on_message()`。App 需要自行处理业务超时，不应在消息回调中阻塞等待另一条响应。
-
-### Host Component
-
-Host Component 是可选的 Windows x64 DLL，用于实现必须在 Windows 侧完成的业务，例如：
-
-- 获取 Windows 系统数据；
-- 文件选择、图片解码等 Windows 能力；
-- 创建自定义 App Panel；
-- 通过 USB Channel 与 Device Component 交换业务数据。
-
-Host Component 使用 `kavio_sdk/host/include` 中的 Host API 编译，最终统一输出为：
+A directory is a buildable Kavio project **only when it contains a file named exactly**:
 
 ```text
-<app>/output/host/host.dll
+kavio_project.json
 ```
 
-### USB Channel
-
-Host Component 与 Device Component 之间的 App 自定义通信统一称为 **USB Channel**。
-
-USB Channel 是双向消息通道，业务协议由 App 自己定义。常见做法是把 Host 与 Device 共用的协议声明放在：
+The root `./kavio` tool recursively scans:
 
 ```text
-<app>/common/
+kavio_app/**/kavio_project.json
 ```
 
-Native Device API 中对应 `SendCommChannelData`、`OnMessage(MSG_P2A_DATA_COMM_CHANNEL)` 等接口；Host API 中通过 `send` 和 `KavioHostOnData` 收发数据。Python Demo 对这些接口做了轻量封装。
+The directory containing that file becomes one project. Its project key is the path relative to `kavio_app/`.
 
-App 开发只需要围绕 USB Channel 设计自己的消息协议，不需要处理底层 USB 传输细节。
-
-### App Configuration 与 App Panel
-
-App Configuration 的配置项与 App Panel 都是可选能力，且相互独立；但 `schema_description.json` 文件是必需的，无配置时内容为 `{}`：
-
-- **App Configuration**：通过 `package/schema_description.json` 描述标准配置项，由 Kavio UI 生成配置页面；配置读写、校验和持久化由 Device SDK 管理；
-- **App Panel**：由 Host Component 创建自定义 Windows 界面，适合文件拖放、预览、交互控制等场景。
-
-## 2. 推荐仓库结构
-
-当前 Demo 的构建脚本使用相对路径查找 Kavio SDK 和打包依赖，推荐保持以下目录关系：
+For example:
 
 ```text
-<repository>/
-├── kavio_app/                  # 本目录
-└── kavio_sdk/
-    ├── device/
-    └── host/
+kavio_app/
+├── MyApp/kavio_project.json
+├── KavioDemoCpp/kavio_project.json
+├── KavioDemoPython/kavio_project.json
+└── KavioDemoLua/kavio_project.json
 ```
 
-其中：
-
-- Native Device Component 使用 `kavio_sdk/device/build/KavioDeviceSdkConfig.cmake` 引用预构建 SDK；
-- Python Device Component 使用 `kavio_sdk/device/py/kavio_sdk`；
-- Host Component 使用 `kavio_sdk/host/include`；
-- `.kap` 打包工具使用 `kavio_sdk/device` 中公开维护的 App Manifest 和版本定义。
-
-## 3. 单个 App 的目录结构
+is discovered as:
 
 ```text
-kavio_app/<app_name>/
-├── README.md                   # App 功能、构建、打包和验证说明
-├── common/                     # 可选，Host/Device 共用业务协议
-├── device/                     # Device Component 源码和构建入口
-│   ├── CMakeLists.txt          # Native App 使用
-│   ├── build.sh
-│   └── ...
-├── host/                       # 可选，Windows Host Component
-│   ├── *.sln
-│   ├── *.vcxproj
-│   └── HostComponent.cpp
-├── package/                    # 安装包元数据和静态资源
-│   ├── kavio_package.json
-│   ├── icon.png
-│   └── schema_description.json # 必需；无配置写 {}
-├── output/                     # 构建后的待打包产物
-│   ├── device/
-│   └── host/
-└── dist/                       # 最终 .kap
+MyApp
+KavioDemoCpp
+KavioDemoPython
+KavioDemoLua
 ```
 
-`package/` 只保存安装包描述和静态资源，不保存编译产物。构建结果统一暂存到 `output/`，打包工具再把两部分合并成 `.kap`。
+Directory names such as `cpp`, `python`, `lua`, `Templates`, or `KavioDemo` do not make a project buildable. **Only `kavio_project.json` does.**
 
-## 4. 构建 Device Component
-
-### Native Device Component
-
-先在与 App 相同的目标架构/工具链环境中构建一次 Device SDK：
+Use:
 
 ```bash
-cd kavio_sdk/device
-./build.sh -r
+./kavio list
 ```
 
-Native App 通过 `kavio_sdk/device/build/KavioDeviceSdkConfig.cmake` 引用已经构建好的 Device SDK 和静态库。
+to list discovered projects.
 
-新 App 建议先从最小模板 `app_frame` 开始：
+## 2. Templates are intentionally not projects
 
-```bash
-cd kavio_app/app_frame/device
-./build.sh -r
-```
-
-需要查看完整 SDK 能力实现时，再参考 `sdk_showcase`。
-
-在 x86 Linux 上交叉编译时传入工具链：
-
-```bash
-./build.sh -r --toolchain /path/to/aarch64-toolchain.cmake
-```
-
-构建产物会自动暂存到：
+Source templates live under:
 
 ```text
-<app>/output/device/
+kavio_app/Templates/
 ```
 
-### Python Device Component
-
-Python App 不生成 Native 可执行文件。对应 `build.sh` 负责：
-
-- 检查 Python 源码；
-- 暂存 App Python 文件；
-- 暂存 Kavio Python SDK；
-- 合并运行依赖；
-- 清理构建机产生的 Python 缓存文件。
-
-Python Device SDK 仍受支持；Python API 与构建方式见 `kavio_sdk/device/README.md`。
-
-## 5. 构建 Host Component
-
-包含 `host/` 的 Demo 使用 Visual Studio 工程构建 Host Component。
-
-1. 使用 Visual Studio 2015 或更高版本打开对应 `.sln`；
-2. 选择 `x64`；
-3. 选择 `Debug` 或 `Release`；
-4. 编译 Host 工程。
-
-当前 Demo 工程使用 `v140` 工具集。若本机 Visual Studio 未安装该工具集，可以安装对应 C++ 工具集，或者由 Visual Studio 重定向到已安装的工具集。
-
-Host 工程应将最终 DLL 直接输出或在构建后暂存为：
+A template contains:
 
 ```text
-<app>/output/host/host.dll
+kavio_project.json.template
 ```
 
-## 6. 检查和打包 App
+instead of `kavio_project.json`.
 
-`kavio_app.py` 用于发现 App、检查构建产物并生成 `.kap`，不负责执行 Device 或 Host 编译。
+Therefore templates are never returned by `./kavio list` and cannot accidentally be built or packaged as installed Apps.
+
+The template scanner is separate from the project scanner. List templates with:
 
 ```bash
-cd kavio_app
-python3 kavio_app.py list
-python3 kavio_app.py status app_frame
-python3 kavio_app.py package app_frame
+./kavio new --list
 ```
 
-默认输出：
+Current templates:
 
 ```text
-<app>/dist/<app_name>-<version>.kap
+C++
+  cpp/kavio_widget      recommended for normal application UI
+  cpp/framebuffer       application-owned/custom renderer
+  cpp/advanced_ui       raw LVGL specialized UI on the SDK backend
+
+Python
+  python/kavio_widget
+  python/framebuffer
+
+Lua
+  lua/kavio_widget
+  lua/framebuffer
 ```
 
-打包前需要满足：
+Python/Lua do not have `advanced_ui`: the current public script bindings do not expose raw LVGL C APIs, and their custom-renderer path is already represented by `framebuffer`.
 
-- `package/kavio_package.json` 有效；
-- 固定文件 `package/icon.png` 存在且为有效 PNG，宽高均在 1～512 像素内，文件大小不超过 512 KiB；
-- 清单中声明的 Device/Host 产物已经存在于 `output/`；
-- 同级 `schema_description.json` 必须存在且符合标准 Schema，或为 `{}`（无配置）；
-- Python 环境安装 `protobuf>=3.20.3`。SDK 构建负责生成 Python Protobuf 绑定文件。
+## 3. Recommended first step
 
-打包前先运行 `kavio_sdk/device/build.sh` 生成
-`kavio_sdk/device/py/kavio_sdk/proto_py/app_manifest_pb2.py`。
-无配置的 App 也必须在 `package/schema_description.json` 写入 `{}`，不能省略或写空文件。
+Most applications should start from Kavio Widget:
 
-完整打包规则见 [`docs/modules/app/Kavio_Application_Packaging_Guide.md`](../docs/modules/app/Kavio_Application_Packaging_Guide.md)；
-Schema 格式与数据持久化规则见 [`Kavio_App_Configuration_Spec.md`](../docs/modules/app/Kavio_App_Configuration_Spec.md)。
+```bash
+./kavio new MyApp \
+  --template cpp/kavio_widget \
+  --app-id com.example.my-app
+```
 
-## 7. 新建自己的 App
+Then:
 
-新建 Native C++ App 时，建议优先复制最小模板 `app_frame`；只有在需要具体 SDK 能力实现参考时再查看 `sdk_showcase`。复制后至少修改：
+```bash
+./kavio build MyApp  # build only
+./kavio pack MyApp   # build, then package
+```
 
-1. App 目录名；
-2. `package/kavio_package.json` 中的 `appId`、`name`、`version`、`description`；
-3. 用自己的图标替换固定的 `package/icon.png`；
-4. Device Component 的入口、构建目标和业务代码；
-5. 如果需要 Windows 能力，修改 Host Component；
-6. Host/Device 共用的 USB Channel 协议；
-7. 可选的 App Configuration 和 App Panel。
+`new` copies the selected template, replaces template tokens, and converts:
 
-不要把 Kavio SDK 复制到 App 源码目录中。App 只引用仓库中的公共 SDK，打包阶段再根据运行时类型准备最终产物。
+```text
+kavio_project.json.template
+```
 
-## 8. Demo 列表
+into the real project descriptor:
 
-当前公开仓库提供一个最小开发模板和一个综合能力示例：
+```text
+kavio_project.json
+```
 
-| Demo | Device | Host | 主要用途 |
-| --- | --- | --- | --- |
-| `app_frame` | Native C++ | 无 | 最小 SDK 接入模板：KavioClient、Session、AppView、LVGL、正常启动与退出 |
-| `sdk_showcase` | Native C++ | DLL + Panel | AppView/LVGL、USB App Channel 速率测试、HDMI RX 单帧预览、HDMI TX 多 Surface/Partial valid_rect、独立 Keyboard/Mouse、H.264 订阅读取并缓存、Schema 配置更新、Runtime Statistics、Host Panel |
+The new project immediately becomes visible in `./kavio list`.
 
-`sdk_showcase/common/DemoProtocol.h` 只属于该 Demo，用于其 Device Component 和 Host Component 共享业务数据报格式；它不是 Kavio SDK 公共协议。
+## 4. Which template should I choose?
 
-视频播放暂不纳入该综合 Demo。Python Device SDK 的使用方式见对应 README。
+| Requirement | Template |
+| --- | --- |
+| Normal text/buttons/images/forms/settings UI | `*/kavio_widget` |
+| Game, video, OpenCV, Godot, existing/custom renderer | `*/framebuffer` |
+| C++ Chart/Canvas/custom draw/raw LVGL specialized controls | `cpp/advanced_ui` |
+| See all SDK capabilities and Host integration together | `KavioDemoCpp`, `KavioDemoPython`, `KavioDemoLua` |
+
+### `kavio_widget`
+
+The recommended high-level UI route:
+
+```text
+App -> Kavio Widget -> SDK LVGL backend -> Presentation
+```
+
+Applications program against Kavio Widget. LVGL is an SDK backend detail for ordinary Widget projects.
+
+### `framebuffer`
+
+The direct-render route:
+
+```text
+App -> Presentation -> FrameLease -> BGRA framebuffer -> your renderer -> Present
+```
+
+No Kavio Widget UI module is required.
+
+### `advanced_ui` (C++ only)
+
+For C++ applications that need raw LVGL features not represented by Kavio Widget:
+
+```text
+App -> SDK LvglBackend -> same SDK-owned LVGL runtime -> raw LVGL objects
+```
+
+It reuses the SDK backend. It must not call `lv_init()` or create a second LVGL display/AppView.
+
+## 5. `kavio_project.json`
+
+Every real project maintains one project descriptor. Example C++ Widget project:
+
+```json
+{
+  "projectVersion": 1,
+  "language": "cpp",
+  "sdk": {
+    "modules": ["ui"]
+  },
+  "package": {
+    "appId": "com.example.my-app",
+    "version": "1.0.0",
+    "name": "My App",
+    "description": "My Kavio App.",
+    "device": {
+      "runtime": "native",
+      "entry": "kavio_my_app",
+      "arguments": []
+    }
+  }
+}
+```
+
+The formal schema is:
+
+```text
+kavio_app/tools/kavio_project.schema.json
+```
+
+Project files do not need a relative `$schema` path. The Kavio tool always applies the repository's fixed project schema/rules.
+
+## 6. `sdk.modules`
+
+`sdk.modules` declares **optional public SDK modules**, not individual Device APIs or internal shared libraries.
+
+Current supported values:
+
+```text
+ui
+```
+
+No `sdk.modules` field (or an empty list) means the application uses only the core App/Device/Presentation/FrameBuffer capabilities.
+
+```json
+"sdk": {
+  "modules": ["ui"]
+}
+```
+
+enables Kavio Widget UI. The tool automatically deploys the required UI runtime, LVGL backend, and language-specific UI binding. Developers do not list internal dependencies such as `ui_core`, `python_ui_binding`, or `lua_ui_binding`.
+
+Do not add `rx`, `tx`, `h264`, `usb`, `config`, `framebuffer`, or `lvgl` as modules. Those are either core Device/Presentation capabilities or internal implementation details.
+
+## 7. Project layout
+
+Recommended generated project:
+
+```text
+MyApp/
+├── kavio_project.json
+├── icon.png
+├── schema_description.json
+├── README.md
+└── device/
+    └── ...
+```
+
+`icon.png` and `schema_description.json` use fixed names.
+
+## 8. Package metadata
+
+`kavio_project.json.package` is the source of truth for install/runtime metadata. It stays explicit so the package manifest can be derived directly without reconstructing runtime semantics from build fields.
+
+The project descriptor itself is **not** included in `.kap`.
+
+The package contains runtime artifacts such as:
+
+```text
+manifest.json
+icon.png
+schema_description.json
+device/
+host/              # only when declared
+signature.json      # when signing is enabled
+```
+
+Build-only information such as source directories, SDK module selection and CMake configuration is not shipped.
+
+## 9. KavioDemo
+
+`KavioDemoCpp`, `KavioDemoPython`, and `KavioDemoLua` are independent buildable projects. They are integrated SDK capability/regression applications, not starter templates.
+
+Use templates to create your own App. Use KavioDemo to validate how Device APIs, UI, USB, RX/TX, H.264, configuration and Host integration work together.
+
+See the `README.md` within each demo project.
+
+## Batch operations
+
+```bash
+./kavio build_all [--release] [--jobs 4]
+./kavio pack_all [--release] [--jobs 4]
+```
+
+Both commands discover projects recursively by `kavio_project.json`, continue after an invalid project or individual build failure, and return a nonzero exit status if any project fails. `pack_all` builds each Device App before packaging it. Host DLLs and host-side dependencies must still be built on Windows and copied to each project's own `build/apps/<project-key>/host/` directory.

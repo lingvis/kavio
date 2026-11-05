@@ -1,13 +1,14 @@
 /**
  * @file KavioClient.h
- * @brief Kavio Device SDK：设备会话、异步 IPC 控制、RX/TX 与 H.264 共享内存接口。
+ * @brief Low-level device client for advanced C++ integrations.
  *
- * 业务请求成功返回仅表示本地 IPC 消息已提交；Platform 处理结果由
- * IClientMessageHandler::OnMessage() 异步交付，凭 track_id 关联。
- * SDK 不替业务请求计时。OnMessage 在单独的单线程派发循环中顺序执行，
- * 耗时处理会拖延后续消息派发，但不会直接阻塞 IPC 接收线程。
+ * Requests are asynchronous. A successful local submission does not imply
+ * successful remote processing; match later responses using their track IDs.
+ * Prefer the higher-level App and Device interfaces for ordinary applications.
  */
 #pragma once
+
+/** Low-level client interface. Prefer App and Device for typical applications. */
 
 #include <kavio/Types.h>
 #include <kavio/AppViewSurface.h>

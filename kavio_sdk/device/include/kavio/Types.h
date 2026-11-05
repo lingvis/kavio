@@ -1,8 +1,10 @@
 /**
  * @file Types.h
- * @brief Kavio Device SDK Í¨ÓÃÊı¾İÀàĞÍ¡¢Í¼Ïñ¸ñÊ½Óë Session ÅäÖÃ¡£
+ * @brief Kavio Device SDK é€šç”¨æ•°æ®ç±»å‹ã€å›¾åƒæ ¼å¼ä¸ Session é…ç½®ã€‚
  */
 #pragma once
+
+/** Shared C++ value types used across SDK APIs. */
 
 #include <cstddef>
 #include <cstdint>

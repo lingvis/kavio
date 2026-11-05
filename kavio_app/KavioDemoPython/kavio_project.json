@@ -1,0 +1,29 @@
+{
+  "projectVersion": 1,
+  "language": "python",
+  "sdk": {
+    "modules": [
+      "ui"
+    ]
+  },
+  "package": {
+    "appId": "com.kavio.demo.python",
+    "version": "1.0.0",
+    "name": "KavioDemo Python",
+    "description": "KavioDemo Python demonstrates the public SDK Device, Presentation, Widget, USB, HDMI RX/TX, keyboard/mouse, H.264 and configuration capabilities.",
+    "device": {
+      "runtime": "python",
+      "entry": "main.py",
+      "arguments": [],
+      "python": {
+        "pythonVersion": "3.8",
+        "installMode": "online",
+        "requirements": "requirements.txt"
+      }
+    },
+    "host": {
+      "binary": "host.dll",
+      "panel": true
+    }
+  }
+}

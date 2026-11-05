@@ -70,7 +70,7 @@ int main() {
 
 ## 4. 系统组件
 
-使用同一份头文件，不提供旧 Logger 兼容层：
+系统组件使用同一份头文件：
 
 ```cpp
 using namespace kavio::logging;
@@ -105,14 +105,14 @@ void CaptureFrame(unsigned frame) {
 
 DLL 与 AppHost 的日志保存在**同一个 App 日志目录，但不同文件**。这是选择 header-only、无日志回调、无跨 DLL Logger 对象共享后的明确取舍。不要尝试让独立的 sink 同时写同一文件，否则无法保证文件切换、写入原子性与关闭顺序。
 
-开发者应在 `KavioHostStop/KavioHostDestroy` 阶段停止业务线程并保证不再写入，宿主随后关闭 DLL 日志并卸载模块。`KavioHostApi::log` 和日志 IPC 均已删除；旧组件需要重新编译。
+开发者应在 `KavioHostStop/KavioHostDestroy` 阶段停止业务线程并保证不再写入；随后由宿主关闭 DLL 日志并卸载模块。Host Component 日志仅使用本地文件 Logger，不通过 Host C ABI 逐条转发。
 
 ## 6. Device Python App
 
 Python 侧使用标准库 `logging.FileHandler` 封装，不依赖 C++ 扩展或第三方 Python 包：
 
 ```python
-from kavio_sdk import app_logger
+from kavio import app_logger
 
 logger = app_logger.init("main", "INFO")
 logger.info("Device app started, id=%s", app_id)

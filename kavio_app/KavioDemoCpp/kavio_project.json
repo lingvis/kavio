@@ -1,0 +1,24 @@
+{
+  "projectVersion": 1,
+  "language": "cpp",
+  "sdk": {
+    "modules": [
+      "ui"
+    ]
+  },
+  "package": {
+    "appId": "com.kavio.demo.cpp",
+    "version": "1.0.0",
+    "name": "KavioDemo C++",
+    "description": "KavioDemo C++ demonstrates Kavio public SDK capabilities including AppView rendering, USB App Channel communication and throughput, HDMI RX/TX surfaces and partial regions, keyboard/mouse output, H.264 stream capture, runtime diagnostics, App Configuration updates and a Windows Host Panel.",
+    "device": {
+      "runtime": "native",
+      "entry": "kavio_demo_cpp",
+      "arguments": []
+    },
+    "host": {
+      "binary": "host.dll",
+      "panel": true
+    }
+  }
+}

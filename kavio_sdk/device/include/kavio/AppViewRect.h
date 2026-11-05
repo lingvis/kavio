@@ -1,5 +1,7 @@
 #pragma once
 
+/** Pixel rectangles used by display and damage-region APIs. */
+
 #include <cstdint>
 
 namespace kavio {

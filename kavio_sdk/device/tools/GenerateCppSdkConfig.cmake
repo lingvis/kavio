@@ -2,6 +2,8 @@
 foreach(required_var IN ITEMS
         KAVIO_CONFIG_OUTPUT
         KAVIO_MAIN_LIBRARY
+        KAVIO_APP_RUNTIME_LIBRARY
+        KAVIO_UI_CORE_LIBRARY
         KAVIO_SHARED_LIBRARY
         KAVIO_PROTO_LIBRARY
         KAVIO_PROTOBUF_LIBRARY
@@ -23,17 +25,19 @@ include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 
 set(_KAVIO_DEVICE_SDK_MAIN "@KAVIO_MAIN_LIBRARY@")
+set(_KAVIO_APP_RUNTIME "@KAVIO_APP_RUNTIME_LIBRARY@")
+set(_KAVIO_UI_CORE "@KAVIO_UI_CORE_LIBRARY@")
+set(_KAVIO_UI_LVGL "@KAVIO_UI_LVGL_LIBRARY@")
 set(_KAVIO_DEVICE_SDK_SHARED "@KAVIO_SHARED_LIBRARY@")
 set(_KAVIO_DEVICE_SDK_PROTO "@KAVIO_PROTO_LIBRARY@")
 set(_KAVIO_DEVICE_SDK_PROTOBUF "@KAVIO_PROTOBUF_LIBRARY@")
 set(_KAVIO_DEVICE_SDK_PROTOC "@KAVIO_PROTOC_EXECUTABLE@")
 set(_KAVIO_DEVICE_SDK_JSONCPP "@KAVIO_JSONCPP_LIBRARY@")
-set(_KAVIO_DEVICE_SDK_LVGL_ADAPTER "@KAVIO_LVGL_ADAPTER_LIBRARY@")
-set(_KAVIO_DEVICE_SDK_LVGL "@KAVIO_LVGL_LIBRARY@")
-set(_KAVIO_DEVICE_SDK_FREETYPE "@KAVIO_FREETYPE_LIBRARY@")
 
 foreach(_kavio_required_file IN ITEMS
         "${_KAVIO_DEVICE_SDK_MAIN}"
+        "${_KAVIO_APP_RUNTIME}"
+        "${_KAVIO_UI_CORE}"
         "${_KAVIO_DEVICE_SDK_SHARED}"
         "${_KAVIO_DEVICE_SDK_PROTO}"
         "${_KAVIO_DEVICE_SDK_PROTOBUF}"
@@ -46,9 +50,14 @@ foreach(_kavio_required_file IN ITEMS
     endif()
 endforeach()
 
-# Exact host/target-build executable used to generate SDK and App protobuf code.
-# Apps must use this compiler rather than whichever protoc happens to be on PATH.
+# Exact SDK-bundled compiler used to generate SDK and App protobuf code.
+# Apps should use this target/path rather than whichever protoc happens to be on PATH.
 set(KAVIO_DEVICE_SDK_PROTOC_EXECUTABLE "${_KAVIO_DEVICE_SDK_PROTOC}")
+if(NOT TARGET Kavio::Protoc)
+    add_executable(Kavio::Protoc IMPORTED)
+    set_target_properties(Kavio::Protoc PROPERTIES
+        IMPORTED_LOCATION "${_KAVIO_DEVICE_SDK_PROTOC}")
+endif()
 
 if(NOT TARGET Kavio::DeviceSdk)
     add_library(Kavio::DeviceSdk STATIC IMPORTED)
@@ -68,34 +77,47 @@ if(NOT TARGET kavio_sdk)
     )
 endif()
 
-# The LVGL adapter is optional because the core Device SDK has no LVGL dependency.
-if(NOT "${_KAVIO_DEVICE_SDK_LVGL_ADAPTER}" STREQUAL "" AND
-   NOT "${_KAVIO_DEVICE_SDK_LVGL}" STREQUAL "" AND
-   NOT "${_KAVIO_DEVICE_SDK_FREETYPE}" STREQUAL "" AND
-   EXISTS "${_KAVIO_DEVICE_SDK_LVGL_ADAPTER}" AND
-   EXISTS "${_KAVIO_DEVICE_SDK_LVGL}" AND
-   EXISTS "${_KAVIO_DEVICE_SDK_FREETYPE}")
-    if(NOT TARGET Kavio::DeviceSdkLvgl)
-        add_library(Kavio::DeviceSdkLvgl STATIC IMPORTED)
-        set_target_properties(Kavio::DeviceSdkLvgl PROPERTIES
-            IMPORTED_LOCATION "${_KAVIO_DEVICE_SDK_LVGL_ADAPTER}"
+if(NOT TARGET Kavio::App)
+    add_library(Kavio::App SHARED IMPORTED)
+    set_target_properties(Kavio::App PROPERTIES
+        IMPORTED_LOCATION "${_KAVIO_APP_RUNTIME}"
+        INTERFACE_INCLUDE_DIRECTORIES
+            "@KAVIO_INCLUDE_DIR@;@KAVIO_LOGGING_DIR@"
+        INTERFACE_LINK_OPTIONS
+            "$<$<PLATFORM_ID:Linux>:-Wl,-rpath,$ORIGIN/lib>"
+    )
+endif()
+
+if(NOT TARGET Kavio::UI::Core)
+    add_library(Kavio::UI::Core SHARED IMPORTED)
+    set_target_properties(Kavio::UI::Core PROPERTIES
+        IMPORTED_LOCATION "${_KAVIO_UI_CORE}"
+        INTERFACE_INCLUDE_DIRECTORIES "@KAVIO_INCLUDE_DIR@"
+    )
+endif()
+
+if(NOT "${_KAVIO_UI_LVGL}" STREQUAL "" AND EXISTS "${_KAVIO_UI_LVGL}")
+    if(NOT TARGET Kavio::UI::LVGL)
+        add_library(Kavio::UI::LVGL SHARED IMPORTED)
+        set_target_properties(Kavio::UI::LVGL PROPERTIES
+            IMPORTED_LOCATION "${_KAVIO_UI_LVGL}"
             INTERFACE_INCLUDE_DIRECTORIES
                 "@KAVIO_INCLUDE_DIR@;@KAVIO_LVGL_INCLUDE_DIR@;@KAVIO_LV_CONF_DIR@;@KAVIO_FREETYPE_INCLUDE_DIR@;@KAVIO_LVGL_INCLUDE_DIR@/libs/freetype"
             INTERFACE_COMPILE_DEFINITIONS LV_CONF_INCLUDE_SIMPLE
-            INTERFACE_LINK_LIBRARIES "Kavio::DeviceSdk;${_KAVIO_DEVICE_SDK_LVGL};${_KAVIO_DEVICE_SDK_FREETYPE}"
+            INTERFACE_LINK_LIBRARIES "Kavio::UI::Core;Kavio::App"
         )
     endif()
 endif()
 
 unset(_KAVIO_DEVICE_SDK_MAIN)
+unset(_KAVIO_APP_RUNTIME)
+unset(_KAVIO_UI_CORE)
+unset(_KAVIO_UI_LVGL)
 unset(_KAVIO_DEVICE_SDK_SHARED)
 unset(_KAVIO_DEVICE_SDK_PROTO)
 unset(_KAVIO_DEVICE_SDK_PROTOBUF)
 unset(_KAVIO_DEVICE_SDK_PROTOC)
 unset(_KAVIO_DEVICE_SDK_JSONCPP)
-unset(_KAVIO_DEVICE_SDK_LVGL_ADAPTER)
-unset(_KAVIO_DEVICE_SDK_LVGL)
-unset(_KAVIO_DEVICE_SDK_FREETYPE)
 unset(_kavio_required_file)
 ]=])
 string(CONFIGURE "${_template}" _content @ONLY)

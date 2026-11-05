@@ -7,6 +7,8 @@
  */
 #pragma once
 
+/** Status values and diagnostics returned by SDK operations. */
+
 #include <cstdint>
 #include <string>
 #include <utility>

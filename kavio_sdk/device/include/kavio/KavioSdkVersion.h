@@ -1,4 +1,6 @@
 #pragma once
+
+/** SDK version identifiers used for compatibility checks. */
 /*
  * KavioSdkVersion.h
  *

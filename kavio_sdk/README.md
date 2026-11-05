@@ -1,267 +1,126 @@
 # Kavio SDK
 
-Kavio SDK 是 Kavio App 的公开开发接口集合，用于开发运行在 Kavio Device 上的 Device Component，以及运行在 Windows 上的 Host Component。SDK 向 App 提供稳定的软件能力接口，并隔离具体 SoC、板卡和 Kavio Runtime 私有实现。
-
-SDK 按运行位置拆分为两个独立入口：
+Kavio SDK 是 Kavio App 的公开开发接口集合，分为设备端 Device SDK 和 Windows Host SDK。App 只依赖公共 SDK，不依赖设备 Runtime、硬件平台或 Windows Host 的私有实现。
 
 ```text
 kavio_sdk/
-├── README.md
-├── device/                     # Kavio 开发板侧 SDK
-│   ├── README.md
-│   ├── CMakeLists.txt
-│   ├── build.sh
-│   ├── include/kavio/          # C++ 公共 API
-│   ├── src/                    # SDK 实现
-│   ├── proto/                  # Device SDK 协议定义
-│   ├── py/kavio_sdk/           # Python Device SDK
-│   ├── tools/
-│   └── 3rdParty/
-├── common/logging/             # 跨 Windows/Linux 的 header-only 日志模块
-└── host/                       # Windows Host Component SDK
-    ├── README.md
-    └── include/kavio/KavioHost.h
+├── common/logging/          # 公共日志模块
+├── device/                  # Device App SDK：C++ / Python / Lua 5.4
+└── host/                    # Windows x64 Host Component C ABI
 ```
 
-## 1. SDK 与 Kavio App
+## Device SDK
 
-一个 Kavio App 至少包含一个 Device Component，也可以按需增加 Host Component。
+Device SDK 使用统一 C++ Runtime 管理 App 生命周期、设备 Session、AppView Presentation 和事件分发，并通过稳定 C ABI 向 Python、Lua 开放相同能力。
+
+三种正式开发语言：
+
+- C++17
+- Python 3.10+
+- Lua 5.4
+
+核心对象模型：
 
 ```text
-Windows                                      Kavio Device
-┌─────────────────────────┐                  ┌─────────────────────────┐
-│ Host Component          │                  │ Device Component        │
-│ Windows x64 DLL         │◄── USB Channel ─►│ C++ executable          │
-│                         │                  │ or Python script        │
-│ Optional App Panel      │                  │                         │
-└─────────────────────────┘                  │ RX / TX / Input / Config│
-                                             └─────────────────────────┘
+App
+├── Presentation
+│   ├── FrameBuffer / FrameLease
+│   └── optional Widget + LVGL Backend
+└── Device
+    ├── RX / TX
+    ├── USB App Channel
+    ├── Keyboard / Mouse
+    ├── H.264
+    └── App Configuration
 ```
 
-- **Device Component**：App 在 Kavio Device 上的主体，可读取 RX 视频、创建 TX 图层、发送键盘鼠标事件、读取运行状态和处理 App 配置。
-- **Host Component**：可选的 Windows x64 DLL，用于调用 Windows 能力、提供 App Panel，并通过 USB Channel 与 Device Component 双向交换业务数据。
-- **USB Channel**：Host Component 与 Device Component 的 App 专用双向消息通道。业务协议由 App 自己定义。
+AppView 是所有 KavioApp 的显示入口，但 LVGL 不是必选依赖。自定义 Renderer 可以直接绘制 SDK 提供的 BGRA8888 FrameBuffer；普通 UI 可以使用统一 Widget API 和可选 LVGL Backend。
 
-App 开发者只需要使用公开 SDK API，不需要依赖 Kavio Runtime 的内部通信、进程管理或视频管线实现。
+详细说明：[`device/README.md`](device/README.md)
 
-设备侧 AppRegistry（设备完整 App ID 列表、顺序和持久化）属于 Platform/AppService 内部控制面，不属于公开 Device SDK 或 Host SDK 契约。App 只处理自己的 Manifest、配置和运行状态；公共 SDK 不暴露设备全局 App 列表。
+跨语言能力矩阵：[`../docs/modules/sdk/Kavio_Device_SDK_API_Matrix.md`](../docs/modules/sdk/Kavio_Device_SDK_API_Matrix.md)
 
-## 2. 选择开发入口
+## C++ 入口
 
-### Device Component：C++
-
-使用：
-
-```text
-kavio_sdk/device/
-```
-
-Native C++ App 不直接加入 SDK 源码树。先独立构建 `kavio_sdk/device`，再通过生成的 CMake package 链接预编译 SDK：
+普通 C++ App 使用：
 
 ```cmake
-set(KAVIO_DEVICE_SDK_DIR "${REPOSITORY_ROOT}/kavio_sdk/device/build")
 find_package(KavioDeviceSdk CONFIG REQUIRED
     PATHS "${KAVIO_DEVICE_SDK_DIR}"
     NO_DEFAULT_PATH)
 
-target_link_libraries(my_device_app PRIVATE Kavio::DeviceSdk)
+target_link_libraries(my_app PRIVATE Kavio::App)
 ```
 
-这样多个 App 共用同一份 SDK 构建产物，不会在各自构建目录中重复编译 SDK 源码。
+Widget App 额外链接：
 
-业务代码通常只需要：
-
-```cpp
-#include <kavio/KavioClient.h>
+```cmake
+target_link_libraries(my_app PRIVATE Kavio::UI::Core Kavio::UI::LVGL)
 ```
 
-详细说明见 [`device/README.md`](device/README.md)。
+`Kavio::DeviceSdk` 提供低层/高级 C++ 接口。普通 App 不需要直接使用 `KavioClient`、Protobuf 或 JsonCpp。
 
-### Device Component：Python
+## Python 入口
 
-Python SDK 位于：
+高层 Python 包为：
+
+```python
+import kavio
+from kavio import App
+from kavio import ui
+```
+
+Python Native Binding 只调用稳定 C ABI，不创建独立 IPC Session。FrameBuffer 通过 Buffer Protocol 直接访问 AppView 映射；RX Frame 和 H.264 Packet 提供只读 Buffer Protocol。
+
+Python 设备能力统一通过高层 `kavio` 包和稳定 C ABI 提供，不维护独立的 Python IPC/SHM 协议实现。
+
+## Lua 入口
+
+Lua 5.4 使用：
+
+```lua
+local kavio = require("kavio")
+```
+
+Lua App 由 SDK 自带 `kavio_lua_runner` 启动。Runner、Lua VM 和 Binding 属于 Device SDK，不要求设备 App 宿主增加独立 Lua Runtime 类型。
+
+## Host SDK
+
+Windows Host Component 使用：
 
 ```text
-kavio_sdk/device/py/kavio_sdk/
+kavio_sdk/host/include/kavio/KavioHost.h
 ```
 
-当前 Python SDK 提供 Device 生命周期、RX/TX、USB Channel、运行状态、输入事件和 App 配置相关能力。详细说明见 [`device/README.md`](device/README.md)。
+Host SDK 使用稳定 C ABI。Host DLL 在 Windows PC 上独立构建，设备端 `kavio` 工具不负责 Host 编译。
 
-### Host Component：Windows DLL
+详细说明：[`host/README.md`](host/README.md)
 
-使用：
+## 构建
+
+仓库根目录 `kavio` 是正式工程工具：
+
+```bash
+./kavio list
+./kavio build sdk --release
+./kavio build <project-key> --release
+./kavio pack <project-key> --release
+```
+
+每个真实 App 工程由 `kavio_project.json` 自描述；Templates 使用 `kavio_project.json.template`，只通过 `./kavio new` 实例化。语言决定 Device Builder 和基础语言 Binding；`sdk.modules` 当前唯一可选公共模块为 `ui`；`package` 保存最终安装/运行元数据。正式 Schema：
 
 ```text
-kavio_sdk/host/
+kavio_app/tools/kavio_project.schema.json
 ```
 
-Host SDK 是 header-only C ABI，不需要单独构建 SDK。Windows 工程只需加入：
+完整规则：[`../docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md`](../docs/modules/sdk/Kavio_SDK_APP_BUILD_GUIDE.md)
 
-```text
-kavio_sdk/host/include
-```
-
-并包含：
-
-```cpp
-#include <kavio/KavioHost.h>
-```
-
-详细说明见 [`host/README.md`](host/README.md)。
-
-## 3. 统一日志（C++ / Python）
-
-所有组件复用 `kavio_sdk/common/logging/KLogger.h` 的统一 C++ header-only 模块，不需要链接日志专用库。Device C++ SDK 通过 `Kavio::DeviceSdk` 自动导出日志头文件路径；Host DLL 需添加 `common/logging` 一个 include 目录。
-
-```cpp
-#include <KLogger.h>
-auto result = kavio::logging::Logger::Init("main");
-KLOGI("App started");
-KLOGE("Operation failed, code={}", code);
-```
-
-Python 使用 `from kavio_sdk import app_logger`。App 日志只写本地文件，不通过 IPC 或 USB 转发。路径由 Runtime 设置、文件名含 UTC 毫秒启动会话标识，UTC 每日切割、跨日保留同一启动会话 ID、历史日志保留 72 小时；详情见 [Kavio 日志系统设计](../docs/modules/sdk/Kavio_Logging_Design.md)。
-
-## 4. Device SDK 公开能力
-
-| 能力 | C++ API | 说明 |
-| --- | --- | --- |
-| 生命周期 | `KavioClient::Start` / `Stop` | 建立和释放 Device Component 与 Kavio Runtime 的连接 |
-| 运行状态 | `GetRuntimeData` / `GetRxInfo` | 查询 RX、TX、输入设备等运行状态 |
-| RX 视频 | `SetRxParams` / `ReadLatestRxFrame` | 启用 RX 取帧并读取最新视频帧 |
-| TX 图层 | `CreateTxSurface` / `TxSurface::WriteFrame` | 创建 BGRA8888 TX Surface 并提交 App 图像 |
-| TX 控制 | `SetTxParams` | 控制 TX 是否启用及 App 图层层级 |
-| H.264 编码流 | `SubscribeH264Stream` / `ReadH264Packet` | 订阅 Platform 公共编码流，通过只读 SHM 读取数据包 |
-| 输入事件 | `SendInputEvent` | 发送键盘、鼠标事件 |
-| USB Channel | `SendCommChannelData` | 向同一 App 的 Host Component 发送业务数据 |
-| App 配置 | `GetAppConfig` / `UpdateAppConfig` | SDK 自动处理 GET/SET；成功 SET 通过 `OnMessage` 通知业务代码 |
-
-Host 与 Device 的业务消息应通过 USB Channel 传输。C++ Device API 支持发送 **1 字节到 1 MiB** 的单条完整数据报。
-
-## 5. Host SDK 公开能力
-
-Host Component 必须实现以下入口：
-
-```text
-KavioHostCreate
-KavioHostStart
-KavioHostStop
-KavioHostDestroy
-KavioHostOnData
-```
-
-按需实现：
-
-```text
-KavioHostPrepareStop
-KavioHostOnDeviceState
-KavioHostOpenPanel
-```
-
-Kavio Runtime 通过 `KavioHostApi` 向 DLL 提供：
-
-- USB Channel 数据发送；
-- Device 在线状态查询；
-- 当前 App Channel ID；
-- Host Component 重启请求；
-- Host DLL 的日志由 AppHost 统一落盘，SDK 自动导出进程内日志绑定入口；无日志 IPC；
-- App 私有数据目录。
-
-详细 ABI、生命周期和最小实现见 [`host/README.md`](host/README.md)。
-
-## 6. Public / Internal 边界
-
-### Device C++ 公共头文件
-
-```text
-device/include/kavio/KavioClient.h
-device/include/kavio/KavioSdkVersion.h
-device/include/kavio/Status.h
-device/include/kavio/Types.h
-```
-
-业务代码不要直接包含 `device/src/internal/` 下的文件。这些文件属于 SDK 私有实现，不构成 App API。
-
-### Host 公共头文件
-
-```text
-host/include/kavio/KavioHost.h
-```
-
-Host Component 不需要链接 Kavio Windows 程序或引用其内部头文件。
-
-### Python 公共包
-
-```text
-device/py/kavio_sdk/
-```
-
-Python protobuf 文件由 `device/proto/*.proto` 生成，不应手工修改生成文件。
-
-## 7. SDK 版本
+## 版本与 ABI
 
 Device SDK 版本唯一来源：
 
 ```text
-kavio_sdk/device/include/kavio/KavioSdkVersion.h
+device/include/kavio/KavioSdkVersion.h
 ```
 
-版本格式：
-
-```text
-major.minor.patch
-```
-
-当前源码版本：
-
-```text
-3.0.1
-```
-
-Kavio Runtime 在 Device Component 建立连接时检查 SDK 版本是否满足设备端最低接入版本。App 应使用与目标设备软件版本匹配的 SDK 构建。
-
-Host Component 使用稳定 C ABI，通过 `struct_size` 判断结构体字段是否可用，不使用 Device SDK 版本号作为 Host ABI 条件。
-
-## 8. 第三方依赖
-
-Device C++ SDK 使用随构建提供的 protobuf `3.21.12` 与 JsonCpp `1.9.5`：
-
-```text
-kavio_sdk/device/3rdParty/protobuf-3.21.12/
-kavio_sdk/device/3rdParty/jsoncpp-1.9.5/
-```
-
-这些目录是 SDK 构建依赖，不属于 App 公共 API；实际依赖源码需在构建前准备。
-
-Kavio SDK 不把 OpenCV 作为公共依赖。App 如果需要 OpenCV、FFmpeg 或其他库，应在自己的 App 工程中声明和管理。
-
-## 9. 与 Demo 工程配合使用
-
-推荐仓库结构：
-
-```text
-<repository>/
-├── README.md
-├── kavio_sdk/
-└── kavio_app/
-```
-
-当前公开仓库的主综合示例为 `kavio_app/sdk_showcase`：
-
-| Demo | Device | Host | 主要用途 |
-| --- | --- | --- | --- |
-| `sdk_showcase` | C++ | DLL + Panel | AppView/LVGL、USB App Channel、HDMI RX/TX Partial、Keyboard/Mouse、H.264 Capture、Schema 配置更新、Runtime 与 Host Panel |
-
-其 `common/DemoProtocol.h` 是 Demo 私有共享协议，仅供该 App 的 Device/Host 两端共同使用，不属于 SDK 公共 API。
-
-Python Device SDK 仍受支持，具体 API 与构建方式见 `kavio_sdk/device/README.md`；当前仓库不再维护单独的 Python Demo。
-
-## 10. Kavio App Package
-
-Kavio App 安装包统一使用：
-
-```text
-.kap
-```
-
-`.kap` 表示 **Kavio App Package**。App 的 Device Component、可选 Host Component、图标、配置定义和安装清单统一由 App 工程的打包工具生成。
+跨语言 C ABI 单独使用 `KAVIO_ABI_VERSION` 管理兼容性。SDK 版本和 C ABI 版本不是同一概念。

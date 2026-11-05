@@ -200,51 +200,91 @@ project_root/
 
 `kavio_platform` 和 `kavio_win` 可以引用 `kavio_sdk` 的公共状态码、协议和接口定义，但这种引用不改变目录所有权：SDK 是公共契约，不是两个框架的公共杂项目录。只有外部开发者确实需要、且能够形成稳定兼容契约的内容才能进入 SDK。
 
-### 3.2 外部业务项目目录设计
+### 3.2 外部业务项目与模板目录设计
 
-`kavio_app` 以完整 Kavio App 为一级目录边界，并在 App 内部明确区分 Device Component、Host Component、静态打包定义、构建产物和最终发行包：
+`kavio_app` 中明确区分**真实工程**和**源模板**。
+
+真实工程的唯一识别标志：
 
 ```text
-kavio_app/<project_name>/
-├── README.md                    # 项目功能、通信契约和验证说明
-├── device/                     # 必选，ARM Device Component 工程
-│   ├── build.sh                # 只构建本项目设备端程序
-│   ├── CMakeLists.txt
-│   ├── src/ 或 main.cpp
-│   └── build/                  # 本地构建目录，不提交版本库
-├── host/                       # 可选，Windows Host Component 工程
-│   ├── <project>.sln
-│   ├── <app>.vcxproj
-│   └── 应用源码
-├── package/                    # 必选，只保存打包清单和静态资源
-│   ├── kavio_package.json      # 项目唯一打包配置
-│   ├── schema_description.json # 必需；无配置项时为 {}
-│   └── icon.png                # App 图标（可另附静态资源）
-├── output/                     # 双端构建产物，不提交版本库
-│   ├── device/
-│   └── host/
-└── dist/                       # 最终 .kap 安装包
+kavio_project.json
 ```
 
-该结构的设计初衷是：
+根工具递归扫描：
 
-1. **一个项目对应一个 app_id**：目录、通信身份、安装身份、升级边界和版本保持一致。
-2. **业务内聚、平台隔离**：Device Component 与 Host Component 位于同一业务项目，但各自的源码、构建脚本和工程文件不会混放。
-3. **构建入口归属明确**：Linux/ARM 使用的 `build.sh` 位于 `device/`；Windows Host Component 使用 `host/` 中的 `.sln`、`.vcxproj`，由 Visual Studio 2015 或更高版本直接编译。
-4. **静态定义与二进制分离**：`package/` 只维护清单、配置和图标；所有编译产物进入 `output/`，避免版本库中的静态文件与生成文件混杂。
-5. **打包与编译解耦**：两端分别在各自环境中编译，`kavio_app.py` 只检查产物并临时合并 `package/ + output/`，不假装用一个脚本跨系统完成全部编译。
-6. **发行边界清楚**：每个项目自己的 `dist/` 保存最终安装包，避免多个业务项目共享一个全局发行目录。
-7. **Host Component 保持可选**：纯Device Component（设备组件） 省略 `host/` 和清单中的 `host` 字段，其余规则不变。
-8. **示例即模板**：外部开发者复制一个完整项目目录即可开始开发，不需要从多个顶层目录手工拼装。
+```text
+kavio_app/**/kavio_project.json
+```
 
-统一规则：
+目录可以按团队、产品或语言自由组织；工程 Key 是工程目录相对于 `kavio_app/` 的路径。
 
-- `device/build.sh` 只构建当前项目 Device Component，并将主程序放入 `<project>/output/device/`；
-- `host/*.sln` 只包含当前项目 Host Component；使用 Visual Studio 2015 或更高版本编译后，Post-Build Event 将主入口统一放入 `<project>/output/host/host.dll`；
-- Device/Host 构建产物目录固定为 `<project>/output/device/` 与 `<project>/output/host/`，打包后固定进入 `.kap` 的 `device/` 与 `host/` 目录；
-- `kavio_app/kavio_app.py status` 分别检查 `package/` 中的静态文件和 `output/` 中的运行产物；
-- `kavio_app/kavio_app.py package` 使用临时目录合并二者并生成 `<project>/dist/*.kap`；
-- 不允许在 App 目录之外建立另一套平行业务源码树，也不允许维护项目私有 SDK 副本。
+推荐真实工程结构：
+
+```text
+kavio_app/MyApp/
+├── kavio_project.json
+├── icon.png
+├── schema_description.json
+├── README.md
+└── device/
+    └── ...
+```
+
+KavioDemo 的三个语言变体同样是三个真实工程：
+
+```text
+KavioDemoCpp/
+├── host/
+└── kavio_project.json
+KavioDemoPython/
+├── host/
+└── kavio_project.json
+KavioDemoLua/
+├── host/
+└── kavio_project.json
+```
+
+源模板位于：
+
+```text
+kavio_app/Templates/
+```
+
+模板使用 `kavio_project.json.template`，故不会被工程扫描器识别。`./kavio new` 将模板实例化为真实工程。
+
+正式模板：
+
+```text
+C++     framebuffer / kavio_widget / advanced_ui
+Python  framebuffer / kavio_widget
+Lua     framebuffer / kavio_widget
+```
+
+设计规则：
+
+1. **工程文件唯一**：每个可编译 App 变体只维护一个 `kavio_project.json`。
+2. **模板不可误编译**：模板只保存 `kavio_project.json.template`。
+3. **工程扫描确定**：真实项目由 `kavio_project.json` 识别；项目相对路径保留原有目录层级。
+4. **模板扫描独立**：`./kavio new --list` 只扫描 Templates 下的模板描述文件。
+5. **一个语言变体对应一个 app_id**：同一逻辑 App 的 C++、Python、Lua 变体可以独立安装。
+6. **构建入口统一**：仓库根目录 `kavio` 是唯一正式入口。
+7. **构建字段最小化**：Builder、基础 Runtime/Binding 由 `language` 和 `sdk.modules` 推导；Package runtime/entry 等安装语义显式保留。
+8. **中间产物统一**：SDK、Device Component 和 Staging 进入仓库根目录 `build/`。
+9. **发行边界清楚**：`build/apps/<工程相对路径>/dist/` 保存最终 `.kap`，路径不限层级。
+
+统一命令：
+
+```bash
+./kavio new --list
+./kavio new MyApp --template cpp/kavio_widget --app-id com.example.my-app
+./kavio list
+./kavio build sdk
+./kavio build MyApp
+./kavio pack MyApp
+./kavio clean MyApp
+```
+
+`kavio_project.json` 不进入 `.kap`。最终 Manifest 由其 `package` 字段和打包阶段生成的文件清单、大小、SHA-256 等信息组成。
 
 ## 4. Channel 身份与组件 Endpoint 生命周期解耦
 
@@ -388,7 +428,7 @@ device/app 或 device/python_app/
 
 ## 6. manifest.json（应用清单）
 
-`manifest.json` 不再由打包工具手工拼接。唯一结构定义为 `kavio_sdk/device/proto/app_manifest.proto`，打包工具直接构造 `AppManifestPb` 并通过 protobuf JSON 序列化生成文件。JSON 字段名使用 protobuf JSON 默认的 lowerCamelCase（小驼峰）形式，例如 `manifest_version -> manifestVersion`、`app_id -> appId`。
+`manifest.json` 的结构定义以 `kavio_sdk/device/proto/app_manifest.proto` 为准。打包工具直接输出与 protobuf JSON 规则一致的 lowerCamelCase 字段名和标量表示，例如 `manifest_version -> manifestVersion`、`app_id -> appId`；不依赖源码树中的 Python protobuf 生成文件。
 
 `manifest_version` 当前从 `KavioSdkVersion.h` 的 `KAVIO_MANIFEST_VERSION` 读取，现行值为 `1`。
 
@@ -417,7 +457,7 @@ device/app 或 device/python_app/
 
 没有 Host Component 时，省略整个 `host` 对象。
 
-`icon` 由打包工具固定生成成 `icon.png`，来源固定为项目的 `package/icon.png`；PNG 宽高各为 **1～512 像素**，文件大小不超过 **512 KiB**。设备 Launcher 与 Windows Host 按各自界面尺寸缩放源 PNG。
+`icon` 由打包工具固定生成成 `icon.png`，来源固定为项目根目录的 `icon.png`；PNG 宽高各为 **1～512 像素**，文件大小不超过 **512 KiB**。设备 Launcher 与 Windows Host 按各自界面尺寸缩放源 PNG。
 
 所有 App 都是 UI App，并且始终进入 Launcher。Manifest 不再包含 `ui` 声明，也不存在隐藏 App 的运行时分支。
 
@@ -438,7 +478,7 @@ device/app 或 device/python_app/
     "entry": "device/main.py",
     "arguments": [],
     "python": {
-      "pythonVersion": "3.11",
+      "pythonVersion": "3.8",
       "installMode": "auto",
       "environmentArchive": "device/python_env.tar.zst",
       "environmentDefinition": "device/environment.yml",
@@ -461,7 +501,7 @@ device/app 或 device/python_app/
 
 ### 6.4 auto_start
 
-`auto_start` 不再由 `kavio_package.json` 或 App 包声明。新安装 App 的初始值固定为 `false`。
+`auto_start` 不由 `kavio_project.json.package` 或 App 包声明。新安装 App 的初始值固定为 `false`。
 
 Platform 仍可保留设备侧的运行期自动启动设置能力；如果用户通过设备管理界面修改，该值属于设备运行设置，不属于 App 包元数据，也不写入全局 AppRegistry。
 

@@ -1,0 +1,17 @@
+{
+  "projectVersion": 1,
+  "language": "lua",
+  "package": {
+    "appId": "{{APP_ID}}",
+    "version": "1.0.0",
+    "name": "{{APP_NAME}}",
+    "description": "{{APP_NAME}} Kavio application.",
+    "device": {
+      "runtime": "native",
+      "entry": "kavio_lua_runner",
+      "arguments": [
+        "main.lua"
+      ]
+    }
+  }
+}

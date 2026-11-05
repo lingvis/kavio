@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 /*
  * KavioHost.h
  *
@@ -10,7 +10,7 @@
  *
  * ABI 约束：
  * 1. Host ABI 不使用 Device SDK 版本号，通过 struct_size 判断结构体字段可用性。
- * 2. 当前 SDK 尚未正式发布，ABI 可直接调整并要求 Host DLL 重新编译；不维护旧版本兼容。
+ * 2. ABI 不兼容变更要求 Host DLL 重新编译；可扩展字段通过 struct_size 判定。
  * 3. 只能访问 struct_size 已覆盖的字段。
  * 4. ABI 边界不传递 C++ STL 对象、异常或跨运行库分配/释放的内存。
  * 5. KavioAppHost 以 KAVIO_HOST_TYPES_ONLY 包含本文件，只取得 ABI 类型，不声明

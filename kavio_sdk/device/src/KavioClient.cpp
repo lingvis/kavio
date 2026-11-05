@@ -194,14 +194,6 @@ struct AppViewSurface::Impl {
     uint8_t* pixels = nullptr;
     bool write_locked = false;
     std::function<Status(uint32_t, uint64_t)> notify_frame_ready;
-    // UI-thread-only diagnostic counters. No new fields in shared-memory ABI.
-    uint64_t dirty_diag_frames = 0;
-    uint64_t dirty_diag_input_rects = 0;
-    uint64_t dirty_diag_input_pixels = 0;
-    uint64_t dirty_diag_pending_rects = 0;
-    uint64_t dirty_diag_pending_pixels = 0;
-    uint64_t dirty_diag_full_pending = 0;
-
     void CloseMapping() noexcept {
         if (write_locked && header) {
             (void)::pthread_mutex_unlock(&header->mutex);
@@ -753,9 +745,6 @@ struct KavioClient::Impl : public std::enable_shared_from_this<KavioClient::Impl
 
     void HandlePacket(const ProtoPackage& packet) {
         bool forward = true;
-        SdkLog("DEBUG", "IPC receive", "msg_type=", static_cast<int>(packet.header().msg_type()),
-               "track_id=", packet.header().track_id(),
-               "serialized_bytes=", packet.ByteSizeLong());
         switch (packet.header().msg_type()) {
         case kavio::ipc::proto::MSG_P2A_RSP_ERROR:
             HandleError(packet);
@@ -1231,24 +1220,6 @@ Status AppViewSurface::Present(const AppViewRect* dirty_rects, size_t dirty_rect
         }
     }
 
-    // The pending set may cover more than one Present() if the display worker
-    // has not consumed the previous update yet. Compare with LVGL and Platform
-    // diagnostics to identify where a near-full partial copy originates.
-    ++impl_->dirty_diag_frames;
-    impl_->dirty_diag_input_rects += dirty_rects ? dirty_rect_count : 0;
-    if (dirty_rects) {
-        for (size_t i = 0; i < dirty_rect_count; ++i) {
-            AppViewRect clipped{};
-            if (ClipAppViewRect(dirty_rects[i], header->width, header->height, clipped)) {
-                impl_->dirty_diag_input_pixels += detail::AppViewRectPixels(clipped);
-            }
-        }
-    }
-    impl_->dirty_diag_full_pending += header->full_dirty != 0 ? 1 : 0;
-    impl_->dirty_diag_pending_rects += header->dirty_rect_count;
-    impl_->dirty_diag_pending_pixels += header->full_dirty
-        ? static_cast<uint64_t>(header->width) * header->height
-        : detail::AppViewDirtyPixels(header->dirty_rects, header->dirty_rect_count);
     if (header->frame_sequence != UINT64_MAX) {
         ++header->frame_sequence;
     } else {
@@ -1262,28 +1233,26 @@ Status AppViewSurface::Present(const AppViewRect* dirty_rects, size_t dirty_rect
                              std::string(std::strerror(rc)));
     }
     impl_->write_locked = false;
-    if (impl_->dirty_diag_frames >= 200) {
-        const double max_pixels = static_cast<double>(header->width) * header->height *
-                                  impl_->dirty_diag_frames;
-        SdkLog("INFO", "[AppView][Dirty][SDK] surface=", impl_->surface_id,
-               " frames=", impl_->dirty_diag_frames,
-               " input_pct=", (100.0 * impl_->dirty_diag_input_pixels / max_pixels),
-               " pending_pct=", (100.0 * impl_->dirty_diag_pending_pixels / max_pixels),
-               " avg_pending_rects=", (static_cast<double>(impl_->dirty_diag_pending_rects) /
-                                        impl_->dirty_diag_frames),
-               " full_pending=", impl_->dirty_diag_full_pending);
-        impl_->dirty_diag_frames = 0;
-        impl_->dirty_diag_input_rects = 0;
-        impl_->dirty_diag_input_pixels = 0;
-        impl_->dirty_diag_pending_rects = 0;
-        impl_->dirty_diag_pending_pixels = 0;
-        impl_->dirty_diag_full_pending = 0;
-    }
     if (!impl_->notify_frame_ready) {
         return Status::Error(StatusCode::Common_NotConnected,
                              "AppView frame notification channel is unavailable");
     }
     return impl_->notify_frame_ready(impl_->surface_id, frame_seq);
+}
+
+Status AppViewSurface::CancelWrite() {
+    if (!IsValid() || !impl_->write_locked) {
+        return Status::Error(StatusCode::Common_InvalidState,
+                             "AppView CancelWrite requires an active BeginWrite");
+    }
+    const int rc = ::pthread_mutex_unlock(&impl_->header->mutex);
+    if (rc != 0) {
+        return Status::Error(StatusCode::SHM_OperationFailed,
+                             "unlock AppView shared canvas failed: " +
+                             std::string(std::strerror(rc)));
+    }
+    impl_->write_locked = false;
+    return Status::Ok();
 }
 
 void AppViewSurface::Close() noexcept {
@@ -1759,8 +1728,6 @@ Status KavioClient::SendCommChannelData(const void* data, size_t size) {
     }
 
     const uint64_t track_id = impl_->AllocTrackId();
-    SdkLog("DEBUG", "channel send", "track_id=", track_id,
-           "channel_id=", channel_id, "payload_bytes=", size);
     auto packet = MakePackage(kavio::ipc::proto::MSG_A2P_DATA_COMM_CHANNEL, track_id);
     auto* body = packet.mutable_payload()->mutable_a2p_data_comm_channel();
     body->set_channel_id(channel_id);

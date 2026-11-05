@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "targetPlatform": "Ubuntu 20.04 / AArch64 (VS680)",
+  "thirdParty": [
+    {"name": "protobuf", "version": "3.21.12", "path": "kavio_sdk/device/3rdParty/protobuf-3.21.12", "requiredFiles": ["CMakeLists.txt", "src/google/protobuf/message.h"]},
+    {"name": "JsonCpp", "version": "1.9.5", "path": "kavio_sdk/device/3rdParty/jsoncpp-1.9.5", "requiredFiles": ["CMakeLists.txt", "include/json/json.h"]},
+    {"name": "Lua", "version": "5.4.1", "path": "kavio_sdk/device/3rdParty/lua-5.4.1", "requiredFiles": ["lua.h", "lapi.c", "lauxlib.c"], "component": "lua"},
+    {"name": "LVGL", "version": "9.4.0", "path": "kavio_sdk/device/3rdParty/lvgl-9.4.0", "requiredFiles": ["CMakeLists.txt", "lvgl.h"], "component": "ui"},
+    {"name": "FreeType", "version": "2.10.0", "path": "kavio_sdk/device/3rdParty/freetype-2.10.0", "requiredFiles": ["CMakeLists.txt", "include/freetype/freetype.h"], "component": "ui"}
+  ],
+  "system": [
+    {"name": "CMake", "minimumVersion": "3.16", "testedVersion": "3.16.3", "command": "cmake", "apt": "cmake"},
+    {"name": "GCC", "minimumVersion": "9", "testedVersion": "9.4", "command": "gcc", "apt": "gcc"},
+    {"name": "G++", "minimumVersion": "9", "testedVersion": "9.4", "command": "g++", "apt": "g++"},
+    {"name": "Make", "command": "make", "apt": "make"},
+    {"name": "Python interpreter (build driver)", "minimumVersion": "3.8", "command": "python3", "apt": "python3"},
+    {"name": "Python 3.8 development (native binding)", "exactMinorVersion": "3.8", "command": "/usr/bin/python3.8", "header": "/usr/include/python3.8/Python.h", "library": "/usr/lib/aarch64-linux-gnu/libpython3.8.so", "apt": "python3.8-dev", "component": "python"}
+  ],
+  "notes": [
+    "CMake and compiler versions are minimum supported versions; tested versions document the VS680 baseline, not universal exact pins.",
+    "Python 3.8 is the native SDK binding ABI on the target device; an App-specific Python virtual environment may use a different version.",
+    "Threads, dl, m and rt are provided by the target system toolchain/libc; the compiler and linker must support them.",
+    "Host DLL builds use the Windows SDK and Visual Studio toolset configured by each .vcxproj; they are checked separately from the Device build."
+  ]
+}

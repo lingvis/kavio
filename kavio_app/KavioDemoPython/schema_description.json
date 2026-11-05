@@ -1,0 +1,87 @@
+{
+  "definition_version": "2.0",
+  "title": "KavioDemo Python Settings",
+  "description": "Persistent settings used by the Device Component. Runtime controls remain in the App Panel and are intentionally separate from App Configuration.",
+  "fields": [
+    {
+      "key": "default_page",
+      "name": "Default Page",
+      "category": "General",
+      "description": "Page opened when the Device Component starts.",
+      "type": "enum",
+      "value": "home",
+      "options": [
+        {
+          "value": "home",
+          "label": "Home"
+        },
+        {
+          "value": "render",
+          "label": "Render"
+        },
+        {
+          "value": "transfer",
+          "label": "Transfer"
+        },
+        {
+          "value": "hdmi_rx",
+          "label": "HDMI RX"
+        },
+        {
+          "value": "hdmi_tx",
+          "label": "HDMI TX"
+        },
+        {
+          "value": "keyboard",
+          "label": "Keyboard"
+        },
+        {
+          "value": "mouse",
+          "label": "Mouse"
+        },
+        {
+          "value": "h264",
+          "label": "H.264 Capture"
+        },
+        {
+          "value": "schema",
+          "label": "Schema Update"
+        },
+        {
+          "value": "runtime",
+          "label": "Runtime"
+        }
+      ]
+    },
+    {
+      "key": "render_fps",
+      "name": "Render FPS",
+      "category": "Render",
+      "description": "Target animation refresh rate on the Render page.",
+      "type": "integer",
+      "value": 20,
+      "minimum": 5,
+      "maximum": 60,
+      "unit": "fps"
+    },
+    {
+      "key": "show_metrics",
+      "name": "Show Metrics",
+      "category": "Render",
+      "description": "Controls the Render page metrics indicator.",
+      "type": "boolean",
+      "value": true
+    },
+    {
+      "key": "transfer_payload_kb",
+      "name": "Transfer Payload",
+      "category": "Transfer",
+      "description": "Default payload size displayed by the Device transfer test page. The Host Panel has its own runtime test controls.",
+      "type": "integer",
+      "value": 64,
+      "minimum": 1,
+      "maximum": 1023,
+      "unit": "KB"
+    }
+  ]
+}

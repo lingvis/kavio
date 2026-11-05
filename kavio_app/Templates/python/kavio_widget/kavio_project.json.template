@@ -1,0 +1,25 @@
+{
+  "projectVersion": 1,
+  "language": "python",
+  "sdk": {
+    "modules": [
+      "ui"
+    ]
+  },
+  "package": {
+    "appId": "{{APP_ID}}",
+    "version": "1.0.0",
+    "name": "{{APP_NAME}}",
+    "description": "{{APP_NAME}} Kavio application.",
+    "device": {
+      "runtime": "python",
+      "entry": "main.py",
+      "arguments": [],
+      "python": {
+        "pythonVersion": "3.11",
+        "installMode": "online",
+        "requirements": "requirements.txt"
+      }
+    }
+  }
+}

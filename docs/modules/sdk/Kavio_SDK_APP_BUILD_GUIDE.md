@@ -1,472 +1,893 @@
-# Kavio SDK 与外部开发工程编译说明
+# Kavio Device App 工程、构建与打包指南
 
-> 适用目录：`kavio_sdk`、`kavio_app`  
-> 适用对象：Device Component（设备组件）（应用程序）开发者、Host Component（主机组件）开发者、应用包集成人员
+本文描述 Kavio Device App 当前正式的工程识别、项目文件、创建、构建和打包规则。
 
-## 1. 目录结构与边界
+## 1. 唯一正式入口
 
-仓库顶层目录按“框架、公共接口、业务项目”划分：
+仓库根目录只有一个面向 App 开发者的工程工具：
 
-```text
-project_root/
-├── kavio_platform/          # 设备端平台框架，Kavio 官方维护
-├── kavio_win/               # Windows 上位机框架，Kavio 官方维护
-├── kavio_sdk/               # Host / Device 分离的公开 SDK
-├── kavio_app/               # Kavio App Demo、业务项目和打包工具
-└── docs/                    # 架构、协议、构建和打包文档
+```bash
+./kavio
 ```
 
-`kavio_sdk` 按运行位置拆分：
+常用命令：
 
-- `host/include/kavio/`：Windows Host Component 的稳定 C ABI；
-- `device/include/kavio/`：Device C++ 公共 API；
-- `device/py/`：Device Python SDK；
-- `device/proto/`：Device SDK 协议唯一源文件；
-- `device/src/internal/`：SDK 私有实现，业务 App 不允许直接依赖。
+```bash
+./kavio list
+./kavio new MyApp --template cpp/kavio_widget
+./kavio build sdk --release
 
-`kavio_app` 按业务项目组织。一个一级子目录代表一个完整应用包，而不是只代表一段设备端代码或一个 Host Component DLL（动态链接库）。
+### Project-scoped SDK build
 
-```text
-kavio_app/<project_name>/
-├── README.md                # 项目功能、数据协议和验证方法
-├── device/                  # 必选：Device Component（设备组件） 源码和 CMake 构建入口
-│   ├── build.sh
-│   └── CMakeLists.txt
-├── host/                    # 可选：Windows Host Component 源码和 VS 工程
-│   ├── *.sln
-│   └── *.vcxproj
-├── package/                 # 必选：清单和静态打包资源
-│   ├── kavio_package.json
-│   ├── schema_description.json # 必需；无配置项时为 {}
-│   └── icon.png             # 图标（可附其他静态资源）
-├── output/                  # 构建产物，不提交版本库
-│   ├── device/
-│   └── host/
-└── dist/                    # 最终安装包，不提交版本库
+`./kavio build <project>` configures only the SDK language/UI components required by that project's `kavio_project.json`. A C++ project does not require Python or Lua development packages, and a framebuffer-only project does not require the LVGL backend.
+
+`./kavio build sdk` builds the complete SDK, including all enabled language bindings and UI backends, so the corresponding development dependencies must be available.
+./kavio build MyApp --release
+./kavio pack MyApp --release
+./kavio clean MyApp
 ```
 
-### 1.1 设计初衷
+命令语义：
 
-采用此结构的原因如下：
+| 命令 | 作用 |
+| --- | --- |
+| `list` | 扫描并列出所有 Kavio 工程 |
+| `new` | 从正式 Demo 模板创建新工程 |
+| `build` | 构建 Device SDK 或指定 Device App |
+| `pack` | 使用已经构建的 Device 产物生成 `.kap` |
+| `clean` | 清理 SDK、单个工程或全部构建产物 |
 
-1. **业务内聚**：同一个 `appId（应用标识）` 对应的Device Component（设备组件）、Host Component、配置和打包清单放在一起。
-2. **目录边界稳定**：Device Component、Host Component、配置、静态资源和打包清单始终位于同一个 App 一级目录，避免双端代码与发行定义分散。
-3. **包即项目**：项目目录天然对应安装、升级、卸载和版本管理边界。
-4. **构建工具解耦**：Linux 设备端继续使用 CMake（构建系统），Windows Host Component（主机组件）可以使用 Visual Studio 2015，但两端产物分别进入同一项目的 `output/device/` 和 `output/host/`。
-5. **SDK 单一来源**：Platform、KavioWin、Device Component（设备组件） 和 Host Component 都从同级 `kavio_sdk` 获取公共定义，禁止复制 SDK 头文件到业务项目。
-6. **示例可直接复制**：外部开发者复制一个完整项目目录即可开始开发，不需要再从三个顶层目录拼接样例。
+设备端工具不负责 Windows Host DLL 编译，也不调用 MSBuild。
 
 ---
 
-## 2. 编译环境要求
+## 2. 工程与模板如何被识别
 
-### 2.1 Device Component（设备组件）
+### 2.1 真实工程
 
-最低要求：
-
-- Bash（命令行解释器）；
-- CMake（构建系统）3.16 或更高版本；
-- 支持 C++17（C++ 2017 标准）的 GCC（GNU 编译器）或 Clang（编译器）；
-- GNU Make（构建工具）或其他 CMake 构建后端；
-- `nproc`、`find`、`sed` 等常用 GNU（GNU 工具集）命令；
-- pthread（POSIX 线程库）、`rt`（实时扩展库）、`dl`（动态加载库）等 Linux 系统库。
-
-检查工具：
-
-```bash
-cmake --version
-g++ --version
-bash --version
-python3 --version
-```
-
-首次使用前：
-
-```bash
-chmod +x kavio_sdk/device/build.sh
-chmod +x kavio_app/*/device/build.sh
-chmod +x kavio_app/kavio_app.py
-```
-
-### 2.2 Host Component
-
-当前示例工程面向：
-
-- Visual Studio 2015；
-- Platform Toolset（平台工具集）`v140`；
-- x64（64 位 Windows）；
-- Windows SDK 8.1。
-
-Host Component 业务代码只需要包含：
+Kavio 可构建工程的唯一识别标志是：
 
 ```text
-kavio_sdk/host/include/kavio/KavioHost.h
+kavio_project.json
 ```
 
-Host Component 只依赖公开的 `KavioHost.h`；SDK 版本不再进入 App ABI。仍建议业务工程从仓库中的 `kavio_sdk/host/include` 引用该头文件，不要维护私有副本。
+构建工具递归扫描：
 
-Host Component 不维护独立 Host Component API 版本，也不做 SDK 版本校验。`KavioAppHost` 仅通过 `struct_size` 检查公开 C ABI 结构边界。业务项目不得直接包含 `kavio_win` 私有头文件。
+```text
+kavio_app/**/kavio_project.json
+```
+
+扫描到该文件的目录才是可构建工程。工程 Key 是目录相对于 `kavio_app/` 的路径。
+
+仓库内 KavioDemo 示例：
+
+```text
+kavio_app/
+├── KavioDemoCpp/kavio_project.json
+├── KavioDemoPython/kavio_project.json
+└── KavioDemoLua/kavio_project.json
+```
+
+对应：
+
+```text
+KavioDemoCpp
+KavioDemoPython
+KavioDemoLua
+```
+
+```bash
+./kavio list
+```
+
+只列真实工程。
+
+### 2.2 源模板
+
+模板位于：
+
+```text
+kavio_app/Templates/
+```
+
+模板使用：
+
+```text
+kavio_project.json.template
+```
+
+所以不会被工程扫描器命中，也不能直接 `build/pack`。
+
+```bash
+./kavio new --list
+```
+
+使用独立模板扫描器列出模板。`./kavio new` 实例化模板并创建真正的 `kavio_project.json`。
 
 ---
 
-## 3. 第三方依赖目录
-
-### 3.1 Protobuf（协议缓冲区）
-
-SDK 构建依赖：
+## 3. 推荐工程结构
 
 ```text
-kavio_sdk/device/3rdParty/protobuf-3.21.12/
+MyApp/
+├── kavio_project.json
+├── icon.png
+├── schema_description.json
+├── README.md
+└── device/
+    └── ...
 ```
 
-该目录必须包含 `CMakeLists.txt`。此外还需要 `3rdParty/jsoncpp-1.9.5/` 源码，
-用于 App Configuration 的 JSON 校验与持久化。SDK 构建会自动：
+固定文件：
 
-1. 编译 Protobuf 静态库；
-2. 编译 `protoc（协议代码生成器）`；
-3. 扫描 `kavio_sdk/device/proto/*.proto`；
-4. 生成 C++ 协议代码；
-5. 生成 Python 协议绑定（含 `app_manifest_pb2.py`）和 SDK 版本文件；
-6. 将协议代码编译进 SDK。
+| 文件 | 用途 |
+| --- | --- |
+| `kavio_project.json` | 工程、构建和 Package 元数据的唯一源文件 |
+| `icon.png` | App 图标 |
+| `schema_description.json` | App Configuration 定义；无配置时为 `{}` |
+| `device/` | Device Component 源码 |
 
-`*_pb2.py` 与 `sdk_version.py` 均由构建生成，不应作为源码手动维护或提交。
-
-### 3.2 LVGL 与 FreeType
-
-Device SDK 统一持有 Platform 与第三方 App 共用的 LVGL / FreeType 源码：
-
-```text
-kavio_sdk/device/3rdParty/lvgl-9.4.0/
-kavio_sdk/device/3rdParty/freetype-2.10.0/
-```
-
-这两个目录是工程中的唯一源码副本。`kavio_platform` 不再维护自己的 LVGL / FreeType 3rdParty 副本；Platform 构建时直接使用上述 SDK-owned（SDK 所有）依赖。SDK 本身也不得回退到 `kavio_platform/3rdParty` 查找 LVGL 或 FreeType。
-
-Platform 可以继续使用自己的 `lv_conf.h` 来决定 Platform 内置 UI 的 LVGL 编译配置；这不改变 LVGL 源码及 FreeType 源码统一由 Device SDK 持有的依赖边界。外部 App 使用 `Kavio::DeviceSdkLvgl` 时使用 SDK 的 LVGL Adapter 配置。
-
-### 3.3 App 自有第三方库
-
-Kavio SDK 不提供 OpenCV、TBB 等通用 App 开发库。SDK 的 `device/3rdParty` 只保存 Device SDK 自身构建所必需的依赖。
-
-`sdk_showcase` 的公开能力示例不依赖 OpenCV/TBB。新 App 如果需要 OpenCV，应在自己的项目目录或项目依赖管理中声明，不得把 OpenCV 作为 Kavio SDK 公共库使用。
+工程元数据、图标和配置定义都位于工程根目录。
 
 ---
 
-## 4. 单独编译 SDK
+## 4. `kavio_project.json`
 
-进入 SDK 目录：
+一个普通 C++ Widget App 可以非常简单：
 
-```bash
-cd kavio_sdk/device
+```json
+{
+  "projectVersion": 1,
+  "language": "cpp",
+  "sdk": {
+    "modules": ["ui"]
+  },
+  "package": {
+    "appId": "com.example.my-app",
+    "version": "1.0.0",
+    "name": "My App",
+    "description": "My Kavio App.",
+    "device": {
+      "runtime": "native",
+      "entry": "kavio_my_app",
+      "arguments": []
+    }
+  }
+}
 ```
 
-Debug（调试）模式：
-
-```bash
-./build.sh
-```
-
-Release（发布）模式：
-
-```bash
-./build.sh -r
-```
-
-清理：
-
-```bash
-./build.sh -c
-```
-
-主要输出：
+正式 Schema：
 
 ```text
-kavio_sdk/device/build/lib/libkavio_sdk.a
-kavio_sdk/device/build/sdk_proto_src/
-kavio_sdk/device/py/kavio_sdk/proto_py/
+kavio_app/tools/kavio_project.schema.json
 ```
 
-Native C++ App 编译前必须先构建一次 Device SDK。SDK 构建会生成 `KavioDeviceSdkConfig.cmake`，后续多个 App 直接链接这套已构建静态库，不再把 SDK 源码加入各自构建目录。
+### 4.1 为什么项目文件里没有 `$schema`
+
+`$schema` 常被编辑器用于把一个 JSON 文件关联到 JSON Schema，从而提供：
+
+- 字段自动补全；
+- 类型提示；
+- 未知字段检查；
+- 即时格式校验。
+
+如果每个工程都写：
+
+```json
+"$schema": "../../../tools/kavio_project.schema.json"
+```
+
+那么工程移动一层目录就可能使相对路径失效。
+
+因此当前设计不要求项目文件携带 `$schema`。Kavio 工具固定使用：
+
+```text
+kavio_app/tools/kavio_project.schema.json
+```
+
+作为机器可读规范，并在扫描/构建时执行等价的强校验。
+
+Schema 文件本身仍会出现：
+
+```json
+"$schema": "https://json-schema.org/draft/2020-12/schema"
+```
+
+这不是工程路径，而是在声明 **Schema 文件自身采用 JSON Schema Draft 2020-12 语法**。
 
 ---
 
-## 5. 构建设备端项目
+## 5. 哪些字段保留，哪些字段自动推导
 
-每个 Kavio App 的 `device/` 都是一个独立 CMake（构建系统）工程，并拥有自己的构建脚本。根目录 `kavio_app.py` 只负责发现、检查和打包 App，不负责编译 Device Component。
+项目文件的目标不是“把所有内部信息都写出来”，而是只让开发者维护真正属于工程语义的信息。
 
-### 5.1 ARM 板端本机编译
+### 5.1 明确保留的字段
 
-以 `sdk_showcase` 为例：
+#### `language`
 
-```bash
-cd kavio_app/sdk_showcase/device
-./build.sh
+```json
+"language": "cpp"
 ```
 
-Release（发布）模式：
-
-```bash
-./build.sh -r
-```
-
-### 5.2 x86 Linux 交叉编译
-
-```bash
-./build.sh -r --toolchain /absolute/path/to/aarch64-toolchain.cmake
-```
-
-脚本不会猜测工具链。未传工具链时，CMake 使用当前主机默认编译器。
-
-### 5.3 构建输出
-
-项目本地构建目录：
+可选：
 
 ```text
-kavio_app/<project_name>/device/build/
+cpp
+python
+lua
 ```
 
-构建成功后，脚本将设备端主程序复制到：
+它描述开发语言。
+
+#### `package.device.runtime`
+
+即使 Runtime 可以部分从语言猜测，仍然显式保留：
+
+```json
+"runtime": "native"
+```
+
+原因是它属于最终安装包的运行语义，会进入 Manifest。
+
+例如：
+
+- C++：`native`；
+- Python：`python`；
+- Lua：当前使用 SDK `kavio_lua_runner`，所以安装层仍为 `native`。
+
+如果只通过 `language` 推导 Runtime，会把“开发语言”和“设备启动机制”错误地绑成一个概念。
+
+#### `package.device.entry`
+
+这是最终设备运行入口，也属于 Package Manifest，不应隐藏。
+
+#### `package.device.arguments`
+
+运行参数会进入安装清单，因此显式保存。
+
+#### `package.host`
+
+Host Component 是否存在、包内文件名和 Panel 属性属于安装包信息，显式保存。
+
+### 5.2 自动推导的字段
+
+#### Device Builder
+
+不再要求开发者填写：
 
 ```text
-kavio_app/<project_name>/output/device/
+builder=cmake/python/lua
 ```
 
-`build.sh` 只负责当前项目的设备端构建和产物暂存，不处理安装包目标系统、处理器架构或硬件平台匹配。
+工具根据语言确定：
 
-### 5.4 清理
+| language | builder |
+| --- | --- |
+| `cpp` | CMake |
+| `python` | Python staging |
+| `lua` | Lua staging + syntax check |
 
-```bash
-./build.sh -c
+这是确定性关系，没有必要重复配置。
+
+#### 基础 Runtime / Binding 依赖
+
+开发者不再写：
+
+```text
+app_runtime
+python_binding
+lua_runtime
+lua_binding
+...
 ```
 
-该命令删除当前项目的 `device/build/` 和该项目已经暂存的设备端主程序，不影响其他项目。
+工具自动推导。
+
+基础依赖：
+
+| language | 自动依赖 |
+| --- | --- |
+| C++ | App Runtime |
+| Python | App Runtime + Python Core Binding |
+| Lua | App Runtime + Lua Runtime + Lua Core Binding |
+
+如果工程声明：
+
+```json
+"sdk": {
+  "modules": ["ui"]
+}
+```
+
+再自动增加：
+
+```text
+UI Core
+LVGL Backend
+对应语言 UI Binding（Python/Lua）
+```
+
+这样第三方开发者不需要知道 SDK 内部 `.so` 的名字和 Binding 闭包。
+
+#### C++ CMake Target
+
+默认：
+
+```text
+build.target = package.device.entry
+```
+
+大多数工程无需填写 `build.target`。
+
+只有 CMake Target 名称确实与最终设备入口不同，才显式配置：
+
+```json
+"build": {
+  "target": "my_internal_target"
+}
+```
+
+#### Device 源码目录
+
+默认：
+
+```text
+device/
+```
+
+只有工程采用其他布局时才写：
+
+```json
+"build": {
+  "source": "src/device"
+}
+```
+
+#### Lua 脚本入口
+
+Lua 安装入口仍是：
+
+```json
+"entry": "kavio_lua_runner"
+```
+
+Lua 脚本入口直接使用：
+
+```json
+"arguments": ["main.lua"]
+```
+
+不再重复维护单独 `scriptEntry`。
 
 ---
 
-## 6. 构建 Host Component
+## 6. `package` 字段为什么保留为整体
 
-Windows Host Component 的解决方案和工程文件全部位于项目的 `host/`。
+`kavio_project.json.package` 设计成与最终 Package 元数据高度一致：
 
-以 `sdk_showcase` 为例：
-
-```text
-kavio_app/sdk_showcase/host/KavioSdkShowcaseHost.sln
+```json
+"package": {
+  "appId": "...",
+  "version": "...",
+  "name": "...",
+  "description": "...",
+  "device": {
+    "runtime": "...",
+    "entry": "...",
+    "arguments": []
+  },
+  "host": {
+    "binary": "host.dll",
+    "panel": true
+  }
+}
 ```
 
-请使用 **Visual Studio 2015 或更高版本**打开该 `.sln`，选择 `x64` 和需要的 `Debug/Release` 配置后直接编译。当前示例工程使用 `v140` 工具集；如果更高版本 Visual Studio 未安装该工具集，请按 IDE 提示安装对应 C++ 工具集或显式重定向工程。
+打包阶段可以把这个对象作为 Manifest 的元数据基础，而不是根据 `language`、CMake Target 等开发信息逐字段重新猜测。
 
-Host 工程应将主 DLL 命名为 `host.dll`，并直接输出或在构建后复制到：
+构建工具只额外生成：
 
-```text
-kavio_app/<project_name>/output/host/host.dll
-```
-
-应用依赖的其他 DLL 也应复制到同一平台目录。
+- Manifest 协议版本；
+- Package 文件列表；
+- 文件大小；
+- SHA-256；
+- 配置存在状态等由打包器计算的派生信息。
 
 ---
 
-## 7. 项目检查与打包
+## 7. `.kap` 中保存什么
 
-`kavio_app.py` 不负责编译 ARM App 或 Host Component DLL。它负责：
+`kavio_project.json` 是开发工程文件，**不会进入 `.kap`**。
 
-- 发现符合规则的业务项目；
-- 读取 `package/kavio_package.json`；
-- 从 `package/` 检查配置和图标；
-- 从 `output/` 检查 Device Component 和 Host Component；
-- 临时合并两类内容；
-- 调用低级打包器生成 `.kap`。
-
-### 7.1 列出项目
-
-```bash
-cd kavio_app
-python3 kavio_app.py list
-```
-
-### 7.2 检查产物
-
-```bash
-python3 kavio_app.py status sdk_showcase
-```
-
-### 7.3 生成安装包
-
-```bash
-python3 kavio_app.py package sdk_showcase
-```
-
-默认输出：
+最终包保存的是运行时需要的信息：
 
 ```text
-kavio_app/sdk_showcase/dist/sdk_showcase-1.0.0.kap
+manifest.json
+icon.png
+schema_description.json
+device/
+host/               # optional
+signature.json       # signing enabled 时
+```
+
+`manifest.json` 保存：
+
+- App ID；
+- version；
+- display name；
+- description；
+- Device runtime / entry / arguments；
+- Python Runtime 配置（Python App）；
+- Host Component 信息（存在时）；
+- 文件路径、大小和 SHA-256。
+
+不会保存：
+
+- CMake Target；
+- Device 源码目录；
+- `sdk.modules`；
+- 构建机器路径；
+- `kavio_project.json`；
+- 构建命令。
+
+---
+
+## 8. SDK 模块
+
+当前公开可选模块：
+
+```json
+"sdk": {
+  "modules": ["ui"]
+}
+```
+
+### 不声明 `ui`
+
+用于：
+
+- Direct FrameBuffer；
+- 自有 Renderer；
+- 不需要 Kavio Widget/LVGL 的 App。
+
+### 声明 `ui`
+
+用于：
+
+- Kavio Widget；
+- SDK LVGL Backend；
+- C++ Native LVGL extension。
+
+这里声明的是**公开 SDK 能力**，不是内部 Shared Library 列表。
+
+---
+
+## 9. Host Component
+
+如果 Package 有 Host：
+
+```json
+"package": {
+  "host": {
+    "binary": "host.dll",
+    "panel": true
+  }
+}
+```
+
+Host 构建产物统一放到 `build/apps/<工程相对路径>/host/`，例如 `build/apps/KavioDemoCpp/host/host.dll`。该目录由构建工具创建，直接复制 Windows 编译生成的整个 `host/` 目录即可；其余依赖 DLL、资源子目录会一并打包。无需单独配置 Host 搜索路径。
+
+设备侧：
+
+```bash
+./kavio build KavioDemoCpp
+```
+
+不检查 Host。
+
+打包：
+
+```bash
+./kavio pack KavioDemoCpp
+```
+
+如果 `host/` 下缺少 `package.host.binary` 指定的 DLL，直接报错并打印目标路径。
+
+---
+
+## 10. 新建工程
+
+第一步先查看模板：
+
+```bash
+./kavio new --list
+```
+
+不带工程名执行 `./kavio new` 也会显示模板列表。
+
+普通 UI App 推荐：
+
+```bash
+./kavio new MyApp \
+  --template cpp/kavio_widget \
+  --app-id com.mycompany.my-app
+```
+
+Python：
+
+```bash
+./kavio new MyApp --template python/kavio_widget --app-id com.mycompany.my-app
+```
+
+Lua：
+
+```bash
+./kavio new MyApp --template lua/kavio_widget --app-id com.mycompany.my-app
+```
+
+生成后：
+
+```text
+kavio_app/MyApp/
+├── kavio_project.json
+├── icon.png
+├── schema_description.json
+├── README.md
+└── device/
+```
+
+并立即出现在 `./kavio list`。
+
+`new` 自动完成模板复制、token 替换、App ID/name 设置，以及 C++ Device Entry/CMake Target 唯一化。
+
+## 11. 模板选择
+
+正式模板只有 7 个：
+
+```text
+cpp/kavio_widget
+cpp/framebuffer
+cpp/advanced_ui
+python/kavio_widget
+python/framebuffer
+lua/kavio_widget
+lua/framebuffer
+```
+
+### `kavio_widget` — 默认推荐
+
+适用于文字、按钮、图片、表单、设置页等普通 UI：
+
+```text
+App -> Kavio Widget -> SDK LVGL backend -> Presentation
+```
+
+应用代码不需要理解 LVGL Display、draw buffer 或 AppView 创建过程。
+
+### `framebuffer`
+
+适用于游戏、视频、OpenCV、Godot、自研 GUI、已有 Renderer：
+
+```text
+App -> Presentation -> FrameLease -> BGRA buffer -> Renderer -> Present
+```
+
+不声明 `sdk.modules.ui`。
+
+### `advanced_ui` — 仅 C++
+
+用于 Kavio Widget 无法表达、必须直接调用 raw LVGL Chart/Canvas/custom draw 的 C++ 专用界面。必须复用 SDK `LvglBackend` 已创建的同一个 LVGL runtime，不允许自己 `lv_init()` 或创建第二套 Display/AppView。
+
+Python/Lua 当前不提供该模板，因为公开脚本 Binding 不暴露 raw LVGL C API，其自定义 Renderer 场景已由 `framebuffer` 覆盖。
+
+完整选择说明见：
+
+```text
+kavio_app/Templates/README.md
+```
+
+---
+
+## 12. 构建 SDK
+
+Debug：
+
+```bash
+./kavio build sdk
+```
+
+Release：
+
+```bash
+./kavio build sdk --release
+```
+
+并行度：
+
+```bash
+./kavio build sdk --release --jobs 8
+```
+
+输出：
+
+```text
+build/sdk/debug/
+build/sdk/release/
+```
+
+---
+
+## 13. 构建 App
+
+先创建真实工程，例如：
+
+```bash
+./kavio new MyApp --template cpp/kavio_widget --app-id com.example.my-app
+```
+
+然后：
+
+```bash
+./kavio build MyApp
+./kavio build MyApp --release
+```
+
+`build` 自动准备 SDK，读取 `language`/`sdk.modules`，推导 Builder/Runtime/Binding 依赖，只构建或暂存 Device Component；不构建 Windows Host DLL，不生成 `.kap`。
+
+Templates 本身没有 `kavio_project.json`，所以不能直接构建。
+
+---
+
+## 14. 打包 App
+
+先完成相同配置的 Device build：
+
+```bash
+./kavio build MyApp --release
+```
+
+然后：
+
+```bash
+./kavio pack MyApp --release
 ```
 
 指定输出路径：
 
 ```bash
-python3 kavio_app.py package sdk_showcase \
-  --output /tmp/sdk_showcase.kap
+./kavio pack MyApp --release --output /tmp/MyApp.kap
 ```
 
-`tools/build_package.py` 是低级打包器。它要求调用方已经准备好包含清单和全部运行文件的完整暂存目录；普通开发流程不应直接用项目的 `package/` 调用它。
+默认 `.kap` 输出到 `build/apps/<工程相对路径>/dist/`，工程目录可为任意层级，不强制语言目录。
+
+如果工程声明 Host Component，`pack` 检查 `build/apps/<工程相对路径>/host/` 下的 Host DLL；缺失则失败。`build` 阶段只创建目标目录，不检查 Host DLL。设备额外文件放在同一工程构建根目录的 `device/` 下，保持目录结构打包。
 
 ---
 
-## 8. 新建一个完整业务项目
+## 15. 清理
 
-推荐结构：
+全部：
 
-```text
-kavio_app/my_project/
-├── README.md
-├── device/
-│   ├── build.sh
-│   ├── CMakeLists.txt
-│   └── main.cpp
-├── host/                    # 没有 Host Component 时省略
-├── package/
-│   └── kavio_package.json
-├── output/                 # 自动生成
-└── dist/                   # 自动生成
+```bash
+./kavio clean all
 ```
 
-设备端 `CMakeLists.txt` 必须是可独立配置的工程。关键路径计算方式可参考现有综合 Demo：
+只清 SDK：
+
+```bash
+./kavio clean sdk
+```
+
+单个工程：
+
+```bash
+./kavio clean MyApp
+```
+
+---
+
+## 16. Python 工程
+
+核心字段示例：
+
+```json
+{
+  "projectVersion": 1,
+  "language": "python",
+  "sdk": {
+    "modules": ["ui"]
+  },
+  "package": {
+    "appId": "com.example.python-app",
+    "version": "1.0.0",
+    "name": "Python App",
+    "description": "Example",
+    "device": {
+      "runtime": "python",
+      "entry": "main.py",
+      "arguments": [],
+      "python": {
+        "pythonVersion": "3.8",
+        "installMode": "online",
+        "requirements": "requirements.txt"
+      }
+    }
+  }
+}
+```
+
+构建工具会：
+
+- 暂存 Python 源码；
+- 排除 `__pycache__/*.pyc/*.pyo/build/dist`；
+- 对全部 `.py` 做语法检查；
+- 自动加入 Python Core Binding；
+- 声明 UI 时自动加入 Python UI Binding。
+
+---
+
+## 17. Lua 工程
+
+示例：
+
+```json
+{
+  "projectVersion": 1,
+  "language": "lua",
+  "package": {
+    "appId": "com.example.lua-app",
+    "version": "1.0.0",
+    "name": "Lua App",
+    "description": "Example",
+    "device": {
+      "runtime": "native",
+      "entry": "kavio_lua_runner",
+      "arguments": ["main.lua"]
+    }
+  }
+}
+```
+
+Lua 的两个概念要分开：
+
+```text
+开发语言        = lua
+设备进程入口    = kavio_lua_runner
+Lua 脚本入口    = package.device.arguments[0]
+```
+
+构建工具会使用 SDK Runner 对工程中的全部 `.lua` 文件执行语法检查。
+
+---
+
+## 18. C++ 工程
+
+默认情况下：
+
+```text
+CMake Target = package.device.entry
+```
+
+因此推荐：
+
+```json
+"package": {
+  "device": {
+    "runtime": "native",
+    "entry": "kavio_my_app",
+    "arguments": []
+  }
+}
+```
+
+CMake：
 
 ```cmake
-get_filename_component(KAVIO_PROJECT_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-get_filename_component(KAVIO_REPOSITORY_ROOT "${KAVIO_PROJECT_DIR}/../.." ABSOLUTE)
-set(KAVIO_DEVICE_SDK_DIR "${KAVIO_REPOSITORY_ROOT}/kavio_sdk/device/build")
-
-find_package(KavioDeviceSdk CONFIG REQUIRED
-    PATHS "${KAVIO_DEVICE_SDK_DIR}"
-    NO_DEFAULT_PATH)
+add_executable(kavio_my_app main.cpp)
 ```
 
-关键要求：
+如果 Target 与最终入口确实不同，可以显式：
 
-1. 可执行文件名必须与 `package/kavio_package.json` 的 `device.entry` 一致；
-2. `device/build.sh` 中的 `TARGET_NAME` 必须与 CMake 目标一致；
-3. 业务项目只能引用 `kavio_sdk` 公开接口，并通过 `Kavio::DeviceSdk` 链接预构建 SDK；
-4. Windows 工程只能放在 `host/`；
-5. 编译产物只能进入 `output/`，不能写入 `package/`；
-6. 同一个 `appId` 的双端代码、配置和清单必须留在同一个一级项目中。
+```json
+"build": {
+  "target": "internal_target"
+}
+```
 
 ---
 
-## 9. Device SDK 第三方依赖边界
+## 19. 图标和配置 Schema
 
-`kavio_sdk/device/3rdParty` 只承载 SDK 自身必需依赖。业务 App 的图像、AI、网络等第三方库由 App 自己管理。`sdk_showcase` 不依赖 OpenCV，可作为无额外图像库的 AppView、RX/TX 和 USB Channel 综合示例。其中 RX 示例读取单帧并在 AppView 中缩放预览；TX 示例最多保留 3 个 Surface：普通 200x120 Surface 通过 `WriteFrame()` 更新目标位置并以约 30 Hz 自动移动，Partial 示例使用 320x200 Surface 内移动的 96x72 `valid_rect` 展示部分发布/合成语义；Keyboard 示例通过 `SendInputEvent()` 覆盖 A–Z、0–9、系统/导航/F1–F12；Mouse 示例使用触摸区域实时映射绝对鼠标坐标，并提供左右键和滚轮测试。H.264 示例订阅公共编码流并把 Annex-B 包保存到 `$KAVIO_APP_DATA_DIR/cache/`，不解码播放；Schema 示例通过 `GetAppConfig()` / `UpdateAppConfig()` / `ResetAppConfigToDefaults()` 展示配置更新。Host Panel 的传输测试支持 1–1023 KB 载荷，并展示基于确认字节计算的当前/平均 Host→Device 有效吞吐率。
-
----
-
-## 10. 当前示例
-
-当前公开仓库提供两个层级的参考：
-
-- `app_frame`：最小 Native C++ App 模板，App ID 为 `com.kavio.template.app-frame`。只保留 `KavioClient -> Session -> AppView -> LVGL -> Shutdown` 基础链路，适合复制后直接开始业务开发。
-- `sdk_showcase`：综合 SDK 能力示例，App ID 为 `com.kavio.demo.sdk-showcase`。覆盖 AppView/LVGL、USB App Channel（可配置载荷、完整性和吞吐率测试）、独立的 HDMI RX 单帧预览与 HDMI TX 多 Surface/Partial 测试、独立 Keyboard/Mouse 输入输出、H.264 公共流订阅读取与原始缓存、Schema 配置更新、Runtime Statistics 和 Windows Host Panel。视频播放仍不在当前示例范围内。
-
-新 App 默认应从 `app_frame` 开始；需要某项能力的完整用法时再从 `sdk_showcase` 提取对应实现。
-
-最小模板设备端：
-
-```bash
-cd kavio_app/app_frame/device
-./build.sh -r
-```
-
-综合示例设备端：
-
-```bash
-cd kavio_app/sdk_showcase/device
-./build.sh -r
-```
-
-Windows Host Component：使用 Visual Studio 2015 或更高版本打开：
+工程根目录固定：
 
 ```text
-kavio_app/sdk_showcase/host/KavioSdkShowcaseHost.sln
+icon.png
+schema_description.json
 ```
 
-选择 `x64` 和需要的 `Debug/Release` 配置后编译。
+图标要求：
 
-检查和打包：
+- PNG；
+- 宽高 1～512；
+- 最大 512 KiB。
 
-```bash
-cd kavio_app
-python3 kavio_app.py status sdk_showcase
-python3 kavio_app.py package sdk_showcase
+没有 App Configuration 时：
+
+```json
+{}
 ```
 
-该 Demo 的 Host/Device 私有共享协议位于 `kavio_app/sdk_showcase/common/DemoProtocol.h`，不属于 `kavio_sdk/common`，也不构成 Platform/KavioWin 公共协议。
+不要删除 `schema_description.json`。
 
 ---
 
-## 11. 常见问题
+## 20. 常见错误
 
-### 11.1 找不到 kavio_sdk
-
-必须保持：
-
-```text
-project_root/kavio_sdk/
-project_root/kavio_app/
-```
-
-业务项目的 `device/CMakeLists.txt` 根据固定的仓库相对关系定位 SDK。
-
-### 11.2 构建出了 x86 程序
-
-说明在 x86 Linux 上未传交叉编译工具链。使用：
-
-```bash
-./build.sh --toolchain /path/to/aarch64-toolchain.cmake
-```
-
-`build.sh` 会在编译成功后将目标程序复制到 `output/device/`。
-
-### 11.3 status 显示设备入口缺失
+### `./kavio list` 看不到工程
 
 检查：
 
-- 是否运行了当前项目的 `device/build.sh`；
-- 输出文件名是否与 `device.entry` 一致；
-- 文件是否位于固定的 `output/device/`。
+```text
+<project>/kavio_project.json
+```
 
-### 11.4 status 显示 host.dll 缺失
+是否存在且有效。
 
-检查：
+### C++ Target 找不到
 
-- 是否使用与当前 KavioWin 工程一致的 Visual Studio 配置构建；
-- PostBuildEvent 是否成功；
-- `KavioOutputRoot` 是否指向 `..\output`；
-- 文件是否位于固定的 `output/host/host.dll`。
+默认 Target 与：
 
-### 11.5 package 中是否可以放二进制
+```text
+package.device.entry
+```
 
-不应放。`package/` 是版本管理中的清单和静态资源目录；二进制、模型、运行依赖等生成或部署产物统一放入 `output/` 对应平台目录。
+相同。检查 CMake `add_executable()` 名称。
 
-### 11.6 Platform 和 KavioWin 是否也应迁入 kavio_app
+### Python 工程打包失败
 
-不应迁移。二者是 Kavio 运行框架，不属于任何单个 `appId`。
+确认：
+
+```text
+package.device.entry
+```
+
+对应实际 `.py` 文件，且 `package.device.python.requirements` 文件存在。
+
+### Lua 入口失败
+
+确认：
+
+```text
+package.device.entry = kavio_lua_runner
+package.device.arguments[0] = main.lua
+```
+
+且脚本文件实际存在。
+
+### Host 缺失
+
+先在 Windows PC 构建 Host，将 Host DLL 及其依赖复制到 `build/apps/<工程相对路径>/host/`，再执行 `pack`。
 
 ---
 
-## 12. 推荐命令汇总
+## 21. 推荐开发流程
+
+普通 UI App：
 
 ```bash
-# 单独验证 SDK
-cd kavio_sdk/device
-./build.sh -r
-
-# 构建 sdk_showcase Device Component
-cd ../../kavio_app/sdk_showcase/device
-./build.sh -r
-
-# 检查和打包
-cd ../..
-python3 kavio_app.py status sdk_showcase
-python3 kavio_app.py package sdk_showcase
+./kavio new MyApp --template cpp/kavio_widget --app-id com.mycompany.my-app
+./kavio build MyApp
+./kavio pack MyApp
 ```
 
-Windows：使用 Visual Studio 2015 或更高版本打开 `kavio_app/sdk_showcase/host/KavioSdkShowcaseHost.sln`，选择 `x64` 和需要的 `Debug/Release` 配置后编译。
+已经有自己的 Renderer：
+
+```bash
+./kavio new MyRenderer --template cpp/framebuffer --app-id com.mycompany.renderer
+```
+
+需要理解 Demo 应选哪一个时，先看：
+
+```text
+kavio_app/Templates/README.md
+```

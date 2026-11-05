@@ -1,5 +1,7 @@
 #pragma once
 
+/** Presentation surface and frame-management types. */
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -53,7 +55,8 @@ public:
     /**
      * Lock the App-owned shared canvas for a write operation.
      * Platform does not read the pixels while this lock is held. The lock is
-     * process-shared and robust; a failed write must not be followed by Present().
+     * process-shared and robust. If the caller cannot complete the write, call
+     * CancelWrite() instead of Present().
      */
     Status BeginWrite();
 
@@ -76,6 +79,12 @@ public:
      * calls cannot lose earlier updates. An empty list requests a full-canvas update.
      */
     Status Present(const AppViewRect* dirty_rects, size_t dirty_rect_count);
+
+    /**
+     * Cancel the current write transaction without publishing any pixels.
+     * This releases the shared write lock acquired by BeginWrite().
+     */
+    Status CancelWrite();
 
     /** Close this process's mapping. Platform removes the surface when the Session closes. */
     void Close() noexcept;

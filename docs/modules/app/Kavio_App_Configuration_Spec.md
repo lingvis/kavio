@@ -3,22 +3,26 @@
 本文说明现行 App Schema Description、Device SDK 配置管理与上位机 GET/SET 协议。
 对外唯一生效的配置规范以本文件为准；字段格式版本在正文标注，不以文件名区分版本。
 
-## 1. 应用包要求
+## 1. 工程文件要求
 
-每个 App 的 `package/` 目录必须包含 `schema_description.json`，与 `kavio_package.json` 同级。
-打包工具将其原样放入 `.kap`，并加入 `AppManifestPb.files` 完整性校验列表。
-`app_manifest.proto` 不包含 `SchemaConfigPb`、`schema_config` 或兼容旧字段的解析逻辑。
+每个 Kavio App 工程根目录必须包含：
 
 ```text
-package/
-├── kavio_package.json
+MyApp/
+├── kavio_project.json
 ├── schema_description.json   # 必需；无配置时写 {}
-└── icon.png
+├── icon.png
+└── device/
 ```
 
+打包工具将 `schema_description.json` 原样放入 `.kap`，并加入 `AppManifestPb.files` 完整性校验列表。`kavio_project.json` 是开发工程描述，不进入安装包。
+
+`app_manifest.proto` 不包含 `SchemaConfigPb`、`schema_config` 或兼容旧字段的解析逻辑。
+
 - **无配置的唯一有效声明为 `{}`**。
-- 文件缺失、空文件、`null`、`[]`、普通配置值 JSON、非法 JSON 或不符合规范的 Schema 都必须报错。
-- 不在 `kavio_package.json` 中增加 `schemaConfig`，也不再生成 `config/default.json`。
+- 文件缺失、空文件、`null`、`[]`、普通配置值 JSON、非法 JSON或不符合规范的 Schema 都必须报错。
+- 配置 Schema 路径固定，不需要在 `kavio_project.json.package` 中重复声明。
+- 不再生成 `config/default.json`。
 - 配置项发布初始值直接取自 Schema 中的 `fields[].value`。
 
 ## 2. Schema 字段格式
