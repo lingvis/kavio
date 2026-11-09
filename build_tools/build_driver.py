@@ -702,7 +702,7 @@ def run_all_projects(args: argparse.Namespace, *, package: bool) -> int:
     discovery_errors: list[str] = []
     projects = discover_projects(errors=discovery_errors)
     action = "pack" if package else "build"
-    succeeded: list[str] = []
+    succeeded: list[tuple[str, Path | None]] = []
     failed: list[tuple[str, str]] = [("configuration", error) for error in discovery_errors]
 
     for index, project in enumerate(projects, 1):
@@ -710,18 +710,22 @@ def run_all_projects(args: argparse.Namespace, *, package: bool) -> int:
         print(f"\n[{index}/{len(projects)}] {action}: {key}", flush=True)
         try:
             if package:
-                pack_project(project, args)
+                package_path = pack_project(project, args)
             else:
                 build_project(project, args)
+                package_path = None
         except (BuildError, subprocess.CalledProcessError, OSError, KeyError) as exc:
             failed.append((key, str(exc)))
             print(f"FAILED: {key}: {exc}", file=sys.stderr, flush=True)
         else:
-            succeeded.append(key)
+            succeeded.append((key, package_path))
 
     print(f"\n{action}_all summary: {len(succeeded)} succeeded, {len(failed)} failed", flush=True)
-    for key in succeeded:
-        print(f"  OK: {key}", flush=True)
+    for key, package_path in succeeded:
+        if package and package_path is not None:
+            print(f"  OK: {key}: {package_path}", flush=True)
+        else:
+            print(f"  OK: {key}", flush=True)
     for key, reason in failed:
         print(f"  FAILED: {key}: {reason}", file=sys.stderr, flush=True)
     if not projects and not discovery_errors:
