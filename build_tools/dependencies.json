@@ -18,7 +18,7 @@
   ],
   "notes": [
     "CMake and compiler versions are minimum supported versions; tested versions document the VS680 baseline, not universal exact pins.",
-    "Python 3.8 is the native SDK binding ABI on the target device; an App-specific Python virtual environment may use a different version.",
+    "Python 3.8 is the native SDK binding ABI on the target device; Python App environments must use a compatible CPython 3.8 runtime to load the native SDK extensions.",
     "Threads, dl, m and rt are provided by the target system toolchain/libc; the compiler and linker must support them.",
     "Host DLL builds use the Windows SDK and Visual Studio toolset configured by each .vcxproj; they are checked separately from the Device build."
   ]

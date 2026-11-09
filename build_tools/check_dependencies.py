@@ -40,6 +40,12 @@ def main():
     if args.all or args.ui:
         enabled.add('ui')
     manifest = json.loads(MANIFEST.read_text(encoding='utf-8'))
+    if 'python' in enabled:
+        print(
+            '[INFO] Python Native Binding uses the pinned Python 3.8 ABI; '
+            'the Python interpreter running this build checker is independent.',
+            flush=True,
+        )
     failures = []
     for dependency in manifest['thirdParty']:
         if dependency.get('component') and dependency['component'] not in enabled:
@@ -49,7 +55,7 @@ def main():
         if missing:
             failures.append(dependency['name'] + ': missing ' + ', '.join(missing))
         else:
-            print('[OK] {} {} ({})'.format(dependency['name'], dependency['version'], base))
+            print('[OK] {} {} ({})'.format(dependency['name'], dependency['version'], base), flush=True)
     for dependency in manifest['system']:
         if dependency.get('component') and dependency['component'] not in enabled:
             continue
@@ -78,12 +84,12 @@ def main():
         if library and not Path(library).is_file():
             failures.append('{}: missing {} (apt: {})'.format(dependency['name'], library, dependency['apt']))
             continue
-        print('[OK] {}: {} ({})'.format(dependency['name'], version or 'present', location))
+        print('[OK] {}: {} ({})'.format(dependency['name'], version or 'present', location), flush=True)
     if failures:
         for problem in failures:
-            print('[FAIL] ' + problem, file=sys.stderr)
+            print('[FAIL] ' + problem, file=sys.stderr, flush=True)
         return 1
-    print('All selected SDK prerequisites are present.')
+    print('All selected SDK prerequisites are present.', flush=True)
     return 0
 
 

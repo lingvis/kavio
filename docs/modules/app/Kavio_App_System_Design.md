@@ -876,10 +876,11 @@ IPC → Platform SystemChannel 发送给上位机。Platform 不解析业务 JSO
 
 ```text
 conda                                               # 通过 PATH 直接解析系统 Conda 命令
-/home/vs680/.kavio/apps/<app_id>/app/              # .kap 解包后的 App Package
-/home/vs680/.kavio/apps/<app_id>/runtime/          # Platform 管理的 App Runtime
-/home/vs680/.kavio/apps/<app_id>/runtime/python_env/ # Python App 独立环境
-/home/vs680/.kavio/apps/.data/<app_id>/            # App 持久数据和配置
+/home/kavio/.kavio/apps/<app_id>/app/              # .kap 解包后的 App Package
+/home/kavio/.kavio/apps/<app_id>/runtime/          # Platform 管理的 App Runtime
+/home/kavio/.kavio/apps/<app_id>/runtime/python_env/ # Python App 独立环境
+/home/kavio/.kavio/apps/.data/<app_id>/            # App 持久数据和配置
+/home/kavio/.kavio/apps/.logs/install/<app_id>_<session>_<timestamp>.log # 独立安装日志
 ```
 
 `app/` 与 `runtime/` 必须分离：前者只保存安装包发布内容，后者保存 Platform 为该 App 生成的运行信息和 Python 环境。Python 环境不使用全局平铺目录。
@@ -887,7 +888,7 @@ conda                                               # 通过 PATH 直接解析�
 使用路径环境，而不是依赖 Conda 全局环境名称注册。安装期间先在临时目录准备环境，部署成功后进入：
 
 ```text
-/home/vs680/.kavio/apps/<app_id>/runtime/python_env/
+/home/kavio/.kavio/apps/<app_id>/runtime/python_env/
 ```
 
 app_id 必须经过严格格式校验，禁止路径分隔符和目录穿越字符。
@@ -960,7 +961,7 @@ python -m pip install --no-input -r requirements.txt
 Python 环境创建必须在临时目录执行：
 
 ```text
-/home/vs680/.kavio/apps/.installing/<install_session_id>.python-env
+/home/kavio/data/.kavio/apps/.installing/<install_session_id>.python-env
 ```
 
 只有以下条件全部满足时，应用才进入“已安装”：
@@ -1021,8 +1022,8 @@ string pip_index_url = 3;
 AppService 使用参数数组直接执行：
 
 ```text
-/home/vs680/.kavio/apps/<app_id>/runtime/python_env/bin/python
-/home/vs680/.kavio/apps/<app_id>/app/<entry>
+/home/kavio/.kavio/apps/<app_id>/runtime/python_env/bin/python
+/home/kavio/.kavio/apps/<app_id>/app/<entry>
 <arguments...>
 ```
 
@@ -1294,11 +1295,11 @@ message AppServiceConfigPb {
 当前 VS680 默认值：
 
 ```text
-builtin_app_root_dir          = /home/vs680/kavio/apps
-app_root_dir                  = /home/vs680/.kavio/apps
-install_temp_dir              = /home/vs680/.kavio/apps/.installing
+builtin_app_root_dir          = /home/kavio/data/apps
+app_root_dir                  = /home/kavio/.kavio/apps
+install_temp_dir              = /home/kavio/data/.kavio/apps/.installing
 stop_timeout_ms               = 3000
-run_user                      = vs680
+run_user                      = kavio
 developer_mode                = false
 allow_online_python_install   = true
 ```
@@ -1438,8 +1439,8 @@ MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App�
 ### 16.1 区分方式
 
 ```text
-/home/vs680/kavio/apps/<app_id>       → Builtin（系统内置，Package Root）
-/home/vs680/.kavio/apps/<app_id>/        → Installed App Instance Root
+/home/kavio/data/apps/<app_id>       → Builtin（系统内置，Package Root）
+/home/kavio/.kavio/apps/<app_id>/        → Installed App Instance Root
   ├─ app/                                → App Package Root
   └─ runtime/                            → Platform 管理的 App Runtime
 ```

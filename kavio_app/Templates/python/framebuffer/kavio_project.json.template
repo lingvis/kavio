@@ -11,7 +11,7 @@
       "entry": "main.py",
       "arguments": [],
       "python": {
-        "pythonVersion": "3.11",
+        "pythonVersion": "3.8",
         "installMode": "online",
         "requirements": "requirements.txt"
       }

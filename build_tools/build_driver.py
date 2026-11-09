@@ -41,9 +41,14 @@ PYTHON_FIELDS = {"pythonVersion", "installMode", "environmentArchive", "environm
 
 
 def run(command: list[str], *, cwd: Path | None = None) -> None:
+    """Run a build command with live stdout/stderr forwarding and an explicit failure."""
     printable = " ".join(subprocess.list2cmdline([part]) for part in command)
-    print(f"+ {printable}")
-    subprocess.run(command, cwd=cwd, check=True)
+    print(f"+ {printable}", flush=True)
+    completed = subprocess.run(command, cwd=cwd, check=False)
+    if completed.returncode != 0:
+        raise BuildError(
+            f"command failed with exit code {completed.returncode}: {printable}"
+        )
 
 
 def require_string(value: object, field: str, *, allow_empty: bool = False) -> str:
@@ -364,7 +369,7 @@ def build_sdk(args: argparse.Namespace, project: dict[str, Any] | None = None) -
     config = sdk_build / "KavioDeviceSdkConfig.cmake"
     if not config.is_file():
         raise BuildError(f"SDK CMake package was not generated: {config}")
-    print(f"SDK build: {sdk_build}")
+    print(f"SDK build: {sdk_build}", flush=True)
     return sdk_build
 
 
@@ -667,7 +672,7 @@ def build_project(project: dict[str, Any], args: argparse.Namespace) -> tuple[Pa
     prepare_project_outputs(project)
     sdk_build = build_sdk(args, project)
     artifact = build_device(project, args, sdk_build)
-    print(f"Device artifact: {artifact}")
+    print(f"Device artifact: {artifact}", flush=True)
     return sdk_build, artifact
 
 
@@ -683,7 +688,7 @@ def pack_project(project: dict[str, Any], args: argparse.Namespace) -> Path:
     """Always build the Device artifact before packaging it."""
     sdk_build, artifact = build_project(project, args)
     output = package_project(project, args, artifact, sdk_build)
-    print(f"Package: {output}")
+    print(f"Package: {output}", flush=True)
     return output
 
 
@@ -714,13 +719,13 @@ def run_all_projects(args: argparse.Namespace, *, package: bool) -> int:
         else:
             succeeded.append(key)
 
-    print(f"\n{action}_all summary: {len(succeeded)} succeeded, {len(failed)} failed")
+    print(f"\n{action}_all summary: {len(succeeded)} succeeded, {len(failed)} failed", flush=True)
     for key in succeeded:
-        print(f"  OK: {key}")
+        print(f"  OK: {key}", flush=True)
     for key, reason in failed:
-        print(f"  FAILED: {key}: {reason}", file=sys.stderr)
+        print(f"  FAILED: {key}: {reason}", file=sys.stderr, flush=True)
     if not projects and not discovery_errors:
-        print("No Kavio projects found.", file=sys.stderr)
+        print("No Kavio projects found.", file=sys.stderr, flush=True)
         return 1
     return 1 if failed else 0
 
@@ -790,13 +795,13 @@ TEMPLATE_ORDER = [
 ]
 
 TEMPLATE_DESCRIPTIONS = {
-    "cpp/kavio_widget": "Recommended C++ starter for standard Kavio Widget UI.",
-    "cpp/framebuffer": "C++ direct FrameBuffer for an application-owned renderer.",
-    "cpp/advanced_ui": "C++ raw LVGL specialized UI on the SDK-owned LVGL backend.",
-    "python/kavio_widget": "Recommended Python starter for standard Kavio Widget UI.",
-    "python/framebuffer": "Python direct FrameBuffer through the writable buffer protocol.",
-    "lua/kavio_widget": "Recommended Lua starter for standard Kavio Widget UI.",
-    "lua/framebuffer": "Lua direct FrameBuffer through BufferView.",
+    "cpp/kavio_widget": "Standard C++ application with Kavio Widget UI. Recommended for most apps.",
+    "cpp/framebuffer": "C++ application that owns its renderer and writes pixels to FrameBuffer.",
+    "cpp/advanced_ui": "Specialized C++ UI that uses LVGL APIs directly instead of Kavio Widgets.",
+    "python/kavio_widget": "Standard Python application with Kavio Widget UI. Recommended for most apps.",
+    "python/framebuffer": "Python application that renders through the writable FrameBuffer buffer protocol.",
+    "lua/kavio_widget": "Standard Lua application with Kavio Widget UI. Recommended for most apps.",
+    "lua/framebuffer": "Lua application that renders directly through the FrameBuffer BufferView.",
 }
 
 
@@ -817,7 +822,8 @@ def print_templates() -> None:
     if not templates:
         print("No Kavio App templates found.")
         return
-    print("Available templates:\n")
+
+    print("Available templates (choose one with --template):\n")
     current_language = None
     for key in templates:
         language = key.split("/", 1)[0]
@@ -826,7 +832,40 @@ def print_templates() -> None:
             print(f"{label}:")
             current_language = language
         print(f"  {key:24} {TEMPLATE_DESCRIPTIONS.get(key, '')}")
-    print("\nMost applications should start with */kavio_widget.")
+
+    print(
+        "\nRecommended: use <language>/kavio_widget for a standard application. "
+        "Choose framebuffer only when the application needs to own pixel rendering; "
+        "choose cpp/advanced_ui when direct LVGL access is required."
+    )
+
+
+def print_new_help() -> None:
+    print(
+        "Create a new Kavio Device App\n"
+        "============================\n\n"
+        "Syntax:\n"
+        "  ./kavio new <project-path> --template <template-name> [options]\n\n"
+        "The project path is relative to kavio_app/. It may contain subdirectories.\n"
+        "The command copies a template, creates kavio_project.json, and initializes\n"
+        "the App ID, display name, and package version.\n\n"
+        "Options:\n"
+        "  --template <name>   Required template name shown below.\n"
+        "  --app-id <id>       App ID. Default: com.example.<project-name>.\n"
+        "  --name <name>       Display name. Default: final directory name.\n"
+        "  --list              Show template choices and this usage guide.\n\n"
+        "Examples:\n"
+        "  ./kavio new MyFirstApp --template cpp/kavio_widget\n"
+        "  ./kavio new examples/PythonMonitor --template python/kavio_widget \\\n"
+        "      --app-id com.example.python-monitor --name \"Python Monitor\"\n"
+        "  ./kavio new tools/RawDisplay --template lua/framebuffer\n\n"
+        "After creating a project:\n"
+        "  ./kavio list                         # verify the project was discovered\n"
+        "  ./kavio build MyFirstApp             # build its Device artifact\n"
+        "  ./kavio pack MyFirstApp              # build and create the .kap package\n"
+        "  ./kavio build_all                    # build all discovered projects\n\n"
+    )
+    print_templates()
 
 
 def _replace_template_tokens(root: Path, replacements: dict[str, str]) -> None:
@@ -850,10 +889,13 @@ def _replace_template_tokens(root: Path, replacements: dict[str, str]) -> None:
 
 def cmd_new(args: argparse.Namespace) -> int:
     if args.list_templates or args.project is None:
-        print_templates()
+        print_new_help()
         return 0
     if not args.template:
-        raise BuildError("--template is required; run './kavio new --list' to see templates")
+        raise BuildError(
+            "--template is required. Example: './kavio new MyApp --template cpp/kavio_widget'. "
+            "Run './kavio new' to see template descriptions and more examples."
+        )
 
     relative = Path(args.project)
     if relative.is_absolute() or ".." in relative.parts or not relative.parts:
@@ -937,51 +979,144 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="kavio",
         description=(
-            "Create, discover, build and package Kavio Device Apps. "
-            "A directory is a Kavio project only when it contains kavio_project.json."
+            "Kavio Device App development tool. Create projects from templates, "
+            "discover projects, build SDK/App artifacts, and package installable .kap files.\n"
+            "A directory is recognized as a project only when it contains kavio_project.json."
         ),
+        epilog=(
+            "Typical workflow:\n"
+            "  1. ./kavio new MyApp --template cpp/kavio_widget\n"
+            "  2. ./kavio list\n"
+            "  3. ./kavio build MyApp\n"
+            "  4. ./kavio pack MyApp\n\n"
+            "Common commands:\n"
+            "  ./kavio new --help       Show project creation syntax and template choices.\n"
+            "  ./kavio doctor --all     Check all SDK build dependencies.\n"
+            "  ./kavio build sdk        Build the complete Device SDK.\n"
+            "  ./kavio build_all        Build every discovered Device App.\n"
+            "  ./kavio pack_all         Build and package every discovered Device App."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
-    p_doctor = sub.add_parser("doctor", help="check fixed SDK third-party and system build dependencies")
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="check SDK third-party sources and system build dependencies",
+        description="Check the host tools and SDK dependencies required by Device App builds.",
+        epilog=(
+            "Examples:\n"
+            "  ./kavio doctor --all       Check every optional component.\n"
+            "  ./kavio doctor --python    Check Python native binding requirements.\n"
+            "  ./kavio doctor --lua       Check Lua runtime and binding requirements.\n"
+            "  ./kavio doctor --ui        Check LVGL and FreeType requirements."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_doctor.add_argument("--all", action="store_true", help="check all optional SDK components")
     p_doctor.add_argument("--python", action="store_true", help="check Python binding requirements")
     p_doctor.add_argument("--lua", action="store_true", help="check Lua binding requirements")
     p_doctor.add_argument("--ui", action="store_true", help="check LVGL/FreeType requirements")
     p_doctor.set_defaults(func=cmd_doctor)
 
-    p_list = sub.add_parser("list", help="list projects discovered from kavio_project.json")
+    p_list = sub.add_parser(
+        "list",
+        help="list projects discovered from kavio_project.json",
+        description="List valid projects under kavio_app/ and show their language, UI and Host settings.",
+    )
     p_list.set_defaults(func=cmd_list)
 
-    p_build = sub.add_parser("build", help="build the Device SDK or one Device App")
+    p_build = sub.add_parser(
+        "build",
+        help="build the Device SDK or one Device App",
+        description="Build the SDK or the Device artifact for one discovered App project.",
+        epilog=(
+            "Examples:\n"
+            "  ./kavio build sdk              Build the complete Device SDK.\n"
+            "  ./kavio build MyApp            Build the project shown by ./kavio list.\n"
+            "  ./kavio build MyApp --release  Build a Release artifact.\n"
+            "  ./kavio build MyApp --jobs 4   Limit parallel build jobs."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_build.add_argument("project", help="project key shown by './kavio list', or 'sdk'")
     add_common_build_options(p_build)
     p_build.set_defaults(func=cmd_build)
 
-    p_pack = sub.add_parser("pack", help="build and then package one Device App")
+    p_pack = sub.add_parser(
+        "pack",
+        help="build and package one Device App",
+        description="Build one App and create its installable .kap package.",
+        epilog=(
+            "Examples:\n"
+            "  ./kavio pack MyApp\n"
+            "  ./kavio pack MyApp --output ./release/MyApp-1.0.0.kap"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_pack.add_argument("project", help="project key shown by './kavio list'")
     add_common_build_options(p_pack)
     p_pack.add_argument("--output", type=Path, help="override output .kap path")
     p_pack.set_defaults(func=cmd_pack)
 
-    p_build_all = sub.add_parser("build_all", help="build all discovered Device Apps; continue on errors")
+    p_build_all = sub.add_parser(
+        "build_all",
+        help="build all discovered Device Apps and continue after individual failures",
+    )
     add_common_build_options(p_build_all)
     p_build_all.set_defaults(func=cmd_build_all)
 
-    p_pack_all = sub.add_parser("pack_all", help="build and package all discovered Device Apps; continue on errors")
+    p_pack_all = sub.add_parser(
+        "pack_all",
+        help="build and package all discovered Device Apps; continue after individual failures",
+    )
     add_common_build_options(p_pack_all)
     p_pack_all.set_defaults(func=cmd_pack_all)
 
     templates = available_templates()
-    p_new = sub.add_parser("new", help="create a project from a Kavio App template")
-    p_new.add_argument("project", nargs="?", help="new project path relative to kavio_app/, e.g. MyApp")
-    p_new.add_argument("--template", choices=templates, help="template to instantiate")
-    p_new.add_argument("--list", dest="list_templates", action="store_true", help="list available templates")
+    template_guide_lines = [
+        f"  {template:24} {TEMPLATE_DESCRIPTIONS.get(template, '')}"
+        for template in templates
+    ]
+    template_guide = "\n".join(template_guide_lines) if template_guide_lines else "  No templates found."
+    p_new = sub.add_parser(
+        "new",
+        help="create a project from a C++, Python or Lua template",
+        description=(
+            "Create a new App directory under kavio_app/. The selected template is copied "
+            "and its kavio_project.json is initialized for the new project."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  ./kavio new MyApp --template cpp/kavio_widget\n"
+            "  ./kavio new examples/PythonMonitor --template python/kavio_widget \\\n"
+            "      --app-id com.example.python-monitor --name \"Python Monitor\"\n"
+            "  ./kavio new tools/RawDisplay --template lua/framebuffer\n\n"
+            "After creation, run './kavio list', then './kavio build <project-path>' or "
+            "'./kavio pack <project-path>'.\n\n"
+            "Template choices:\n" + template_guide
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_new.add_argument("project", nargs="?", help="project path relative to kavio_app/, e.g. MyApp or examples/MyApp")
+    p_new.add_argument("--template", choices=templates, help="template to copy; see template descriptions below")
+    p_new.add_argument("--list", dest="list_templates", action="store_true", help="show template choices and usage examples")
     p_new.add_argument("--app-id", help="App ID; default: com.example.<project-name>")
-    p_new.add_argument("--name", help="display name; default: project directory name")
+    p_new.add_argument("--name", help="display name; default: final directory name")
     p_new.set_defaults(func=cmd_new)
 
-    p_clean = sub.add_parser("clean", help="clean SDK, one project, or all unified build output")
+    p_clean = sub.add_parser(
+        "clean",
+        help="clean SDK, one project, or all unified build output",
+        description="Remove generated build output. Source projects and templates are not removed.",
+        epilog=(
+            "Examples:\n"
+            "  ./kavio clean MyApp\n"
+            "  ./kavio clean sdk\n"
+            "  ./kavio clean all"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_clean.add_argument("target", help="sdk, all, or a project key")
     p_clean.set_defaults(func=cmd_clean)
     return parser
@@ -996,6 +1131,9 @@ def normalize_args(args: argparse.Namespace) -> None:
 def main() -> int:
     parser = create_parser()
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        return 0
     try:
         normalize_args(args)
         return int(args.func(args))
