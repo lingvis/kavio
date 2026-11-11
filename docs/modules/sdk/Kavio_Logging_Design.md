@@ -6,9 +6,9 @@
 
 - 统一实现：C++14 **header-only** `kavio_sdk/common/logging/KLogger.h`，使用 SDK 随附 `common/logging/spdlog`（1.15.3、bundled fmt），**无需生成或链接日志专用库**。
 - 日志宏：`KLOGT / KLOGD / KLOGI / KLOGW / KLOGE / KLOGC`，采用 fmt `{}` 占位符。源码文件、行号由宏记录。
-- 只向本地文件输出日志，**不通过 IPC、USB、Channel 转发**。运行状态通知属于独立业务机制，不受此约束。
-- **按 UTC 自然日切割**：同一天写同一个文件；UTC 日期变化即打开新文件。不按文件大小轮转。运行期即使没有新日志，C++ 后台刷新线程也会在检测到日期变化后切换文件；Python 在下一条日志发出时切换。
-- **历史保留 72 小时**：按日志文件最后修改时间计算；当前正在写入的文件不删除。初始化时清理，之后每小时检查。当前目录以外的文件和不符合 Kavio 命名规则的文件不会被清理。
+- C++ SDK Logger 只向本地文件输出，不通过 IPC、USB、Channel 转发。Python App 自行使用标准库 logging 配置日志目录；可选通过 stderr 输出开发日志，由进程宿主捕获。运行状态通知属于独立业务机制。
+- **按 UTC 自然日切割**：同一天写同一个文件；UTC 日期变化即打开新文件。不按文件大小轮转。运行期即使没有新日志，C++ 后台刷新线程也会在检测到日期变化后切换文件；Python 标准库 logging 不自动提供此约定，若应用需要 UTC 日切，应自行配置 Handler。
+- **C++ Logger 历史保留 72 小时**：按日志文件最后修改时间计算；当前正在写入的文件不删除。初始化时清理，之后每小时检查。Python 使用标准库 logging，保留策略由 App 自己配置。
 - 72 小时不是进程内文件大小或目录占用空间上限。单日文件没有大小限制；日志输出量过大仍然可能耗尽磁盘。
 - 官方 App 初始化接口没有自定义目录参数。该限制属于开源 SDK 的默认约定，并非安全机制。
 
@@ -20,11 +20,11 @@
 | Platform | `./logs/`（相对 Platform 工作目录） | `kavio` |
 | KavioAppHost | `%APPDATA%\Kavio\log\<app_id>\` | `KavioAppHost` |
 | Host Component DLL | 与 AppHost 相同的 App 专属目录 | `HostComponent` |
-| Device Native/Python App | `<app_root_dir>/.logs/<app_id>/` | `main`（可改名） |
+| Device Native/Python App | `<app_root_dir>/.logs/<app_id>/` | C++：`main`（可改名）；Python：由应用自行定义 |
 
-AppHost 和 AppService 通过 `KAVIO_APP_LOG_DIR` 将默认日志目录提供给 App；若变量缺失，`Logger::Init` 返回失败，不擅自写入当前工作目录。
+AppHost 和 AppService 通过 `KAVIO_APP_LOG_DIR` 将默认日志目录提供给 App。C++ `Logger::Init` 在变量缺失时返回失败；Python App 应在启动时检查该变量，不应默默写入当前工作目录。
 
-文件名格式统一为：
+C++ Kavio Logger 的文件名格式为：
 
 ```text
 <name>_YYYYMMDD_HHMMSS_mmm_<pid>.log
@@ -109,17 +109,29 @@ DLL 与 AppHost 的日志保存在**同一个 App 日志目录，但不同文件
 
 ## 6. Device Python App
 
-Python 侧使用标准库 `logging.FileHandler` 封装，不依赖 C++ 扩展或第三方 Python 包：
+Python App 直接使用 Python 标准库 `logging`，SDK 不提供 `app_logger` 二次封装。AppService 在启动 App 前通过环境变量 `KAVIO_APP_LOG_DIR` 指定应用日志目录；Python App **必须读取该变量**，不可将日志写入当前工作目录或自行推断设备安装路径。
 
 ```python
-from kavio import app_logger
+import logging
+import os
+from pathlib import Path
 
-logger = app_logger.init("main", "INFO")
+log_dir = os.environ.get("KAVIO_APP_LOG_DIR")
+if not log_dir:
+    raise RuntimeError("KAVIO_APP_LOG_DIR is required")
+path = Path(log_dir)
+path.mkdir(parents=True, exist_ok=True)
+
+logger = logging.getLogger("my_app")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+handler = logging.FileHandler(str(path / "main.log"), encoding="utf-8")
+handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+logger.addHandler(handler)
 logger.info("Device app started, id=%s", app_id)
-app_logger.shutdown()
 ```
 
-Python 适配同样按 UTC 日期切割，写入同一 `session_id` 元数据，保留最近 72 小时。`app_logger.session_id()` 返回启动 ID；`app_logger.current_filename()` 返回当前文件名。Python 格式化沿用标准库 `%s` 风格，不是 C++ fmt `{}`。
+Python 标准库采用 `%s` 等格式化占位符。`FileHandler` 默认不进行 UTC 日切或 72 小时清理；如有需要，应用自行使用 `TimedRotatingFileHandler` 配置 `utc=True` 和 `backupCount`。若希望 `kavio run` 直接显示业务日志，应用还可以同时添加 `logging.StreamHandler(sys.stderr)`；该通道经 AppService 捕获，与 `KAVIO_APP_LOG_DIR` 下的文件日志相互独立。KavioDemoPython 演示了文件与 stderr 同时输出的开发配置。
 
 ## 7. 输出格式、清理与风险
 
@@ -128,10 +140,10 @@ Python 适配同样按 UTC 日期切割，写入同一 `session_id` 元数据，
 [2026-10-29T00:00:00.001Z] [4568:4610] [info] [main.cpp:81] Next UTC day
 ```
 
-- 内容使用 UTF-8，记录 UTC 时间、PID/TID、日志等级、源码位置和消息；每份新文件另含标记启动会话的元数据行。
+- C++ Logger 内容使用 UTF-8，记录 UTC 时间、PID/TID、日志等级、源码位置和消息；每份新文件另含标记启动会话的元数据行。Python 日志内容与格式由应用使用标准库配置。
 - C++ 使用 `basic_file_sink_mt`，Error/Critical 立即 flush，其余默认每秒 flush；切割时先打开新文件，打开失败则保留旧 sink，后续日志写入仍可继续，不因切割失败直接终止业务。
-- 过期清理仅识别符合 Kavio 命名模式的普通日志文件，依据最后写入时间执行，当前本 Logger 打开的文件始终排除。
-- 对于持续运行超过三天的进程，**已经跨日关闭的旧文件也会参与 72 小时清理**；当前日仍在写入的文件无容量限制。如果对应进程长期未运行，清理会等到下次有 Logger 启动时进行，不承诺停机期间定时清除。
+- C++ Logger 的过期清理仅识别符合 Kavio 命名模式的普通日志文件，依据最后写入时间执行，当前本 Logger 打开的文件始终排除。
+- 对于使用 C++ Logger 且持续运行超过三天的进程，**已经跨日关闭的旧文件也会参与 72 小时清理**；当前日仍在写入的文件无容量限制。如果对应进程长期未运行，清理会等到下次有 Logger 启动时进行，不承诺停机期间定时清除。
 - Linux Device AppService 现存的 stdout/stderr 重定向文件 `<app_root_dir>/.logs/<app_id>.log` 属于独立机制，不会计入本 Logger 的日切或清理范围。
 
 ## 8. 构建

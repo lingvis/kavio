@@ -4,13 +4,19 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
+import struct
 import subprocess
 import sys
+import time
+import zipfile
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +31,21 @@ TEMPLATE_CONFIG_NAME = "kavio_project.json.template"
 TEMPLATE_ROOT = APP_ROOT / "Templates"
 SUPPORTED_LANGUAGES = {"cpp", "python", "lua"}
 SUPPORTED_SDK_MODULES = {"ui"}
+
+DEVELOPER_SOCKET = "/run/kavio/developer.sock"
+DEVELOPER_PROTOCOL_MAGIC = b"KDEV"
+DEVELOPER_PROTOCOL_VERSION = 1
+DEVELOPER_RESPONSE_BIT = 0x8000
+DEVELOPER_FRAME_HEADER = struct.Struct("!4sHHIiII")
+DEVELOPER_CHUNK_SIZE = 1024 * 1024
+
+DEV_CMD_DEPLOY_BEGIN = 1
+DEV_CMD_DEPLOY_CHUNK = 2
+DEV_CMD_DEPLOY_COMMIT = 3
+DEV_CMD_DEPLOY_ABORT = 4
+DEV_CMD_START_APP = 5
+DEV_CMD_STOP_APP = 6
+DEV_CMD_GET_APP_LOG_PATH = 7
 
 
 class BuildError(RuntimeError):
@@ -645,6 +666,352 @@ def locate_existing_device(project: dict[str, Any], args: argparse.Namespace) ->
     return artifact
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def read_exact(sock: socket.socket, size: int) -> bytes:
+    data = bytearray()
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise BuildError("development deploy connection closed unexpectedly")
+        data.extend(chunk)
+    return bytes(data)
+
+
+class DeveloperControlClient:
+    """Client for the board-local development deploy channel."""
+
+    def __init__(self, socket_path: str = DEVELOPER_SOCKET) -> None:
+        self._socket_path = socket_path
+        self._socket: socket.socket | None = None
+        self._request_id = 0
+
+    def __enter__(self) -> "DeveloperControlClient":
+        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            self._socket.connect(self._socket_path)
+        except OSError as exc:
+            self._socket.close()
+            self._socket = None
+            raise BuildError(
+                "cannot connect to the board-local development deploy channel; "
+                "enable 'Local Development Deploy' on the device and verify the device service is running: "
+                f"{exc}"
+            ) from exc
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
+
+    def request(
+        self,
+        command: int,
+        metadata: dict[str, object] | None = None,
+        payload: bytes = b"",
+    ) -> dict[str, object]:
+        if self._socket is None:
+            raise BuildError("developer control client is not connected")
+        if len(payload) > 2 * 1024 * 1024:
+            raise BuildError("developer control payload exceeds 2 MiB frame limit")
+
+        metadata_bytes = json.dumps(
+            metadata or {}, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        if len(metadata_bytes) > 1024 * 1024:
+            raise BuildError("developer control metadata exceeds 1 MiB frame limit")
+
+        self._request_id = (self._request_id + 1) & 0xFFFFFFFF
+        if self._request_id == 0:
+            self._request_id = 1
+        header = DEVELOPER_FRAME_HEADER.pack(
+            DEVELOPER_PROTOCOL_MAGIC,
+            DEVELOPER_PROTOCOL_VERSION,
+            command,
+            self._request_id,
+            0,
+            len(metadata_bytes),
+            len(payload),
+        )
+        self._socket.sendall(header)
+        if metadata_bytes:
+            self._socket.sendall(metadata_bytes)
+        if payload:
+            self._socket.sendall(payload)
+
+        response_header = read_exact(self._socket, DEVELOPER_FRAME_HEADER.size)
+        magic, version, response_command, request_id, status_code, metadata_size, payload_size = (
+            DEVELOPER_FRAME_HEADER.unpack(response_header)
+        )
+        if magic != DEVELOPER_PROTOCOL_MAGIC or version != DEVELOPER_PROTOCOL_VERSION:
+            raise BuildError("device returned an invalid development deploy frame")
+        if response_command != (command | DEVELOPER_RESPONSE_BIT) or request_id != self._request_id:
+            raise BuildError("device returned a mismatched development deploy response")
+        if metadata_size > 1024 * 1024 or payload_size > 2 * 1024 * 1024:
+            raise BuildError("development deploy response exceeds protocol limits")
+
+        response_metadata_bytes = read_exact(self._socket, metadata_size) if metadata_size else b""
+        if payload_size:
+            read_exact(self._socket, payload_size)
+        try:
+            response = (
+                json.loads(response_metadata_bytes.decode("utf-8"))
+                if response_metadata_bytes else {}
+            )
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise BuildError(f"device returned invalid development deploy response metadata: {exc}") from exc
+        if not isinstance(response, dict):
+            raise BuildError("development deploy response metadata must be a JSON object")
+        if status_code != 0:
+            message = response.get("message")
+            detail = message if isinstance(message, str) and message else f"status={status_code}"
+            raise BuildError(f"device rejected development deploy command: {detail}")
+        return response
+
+
+def inspect_development_package(package_path: Path) -> tuple[str, str, bytes, bytes, int, str]:
+    try:
+        package_size = package_path.stat().st_size
+    except OSError as exc:
+        raise BuildError(f"cannot inspect development package: {package_path}: {exc}") from exc
+    package_sha256 = sha256_file(package_path)
+    try:
+        with zipfile.ZipFile(package_path, "r") as archive:
+            manifest_bytes = archive.read("manifest.json")
+            try:
+                signature_bytes = archive.read("signature.json")
+            except KeyError:
+                signature_bytes = b""
+    except (OSError, zipfile.BadZipFile, KeyError) as exc:
+        raise BuildError(f"cannot read development package metadata: {package_path}: {exc}") from exc
+    try:
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise BuildError(f"development package manifest is invalid: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise BuildError("development package manifest must be a JSON object")
+    app_id = require_string(manifest.get("appId"), "manifest.appId")
+    version = require_string(manifest.get("version"), "manifest.version")
+    return app_id, version, manifest_bytes, signature_bytes, package_size, package_sha256
+
+
+def build_development_package(project: dict[str, Any], args: argparse.Namespace) -> Path:
+    sdk_build, artifact = build_project(project, args)
+    output_dir = BUILD_ROOT.joinpath(
+        "deploy", *Path(str(project["key"])).parts, config_key(args.release)
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output = output_dir / "app.kap"
+
+    # Board-local development deployment updates only the Device Component.
+    # Keep the project definition unchanged so formal packaging still includes
+    # the Host Component when the project declares one.
+    deployment_project = copy.deepcopy(project)
+    deployment_package = deployment_project.get("package")
+    if not isinstance(deployment_package, dict):
+        raise BuildError("project package definition is invalid")
+    deployment_package.pop("host", None)
+
+    package_args = argparse.Namespace(**vars(args))
+    package_args.output = output
+    package_path = package_project(deployment_project, package_args, artifact, sdk_build)
+    print(f"Development package: {package_path}", flush=True)
+    return package_path
+
+
+def deploy_development_package(package_path: Path) -> str:
+    app_id, version, manifest_bytes, signature_bytes, package_size, package_sha256 = (
+        inspect_development_package(package_path)
+    )
+    session_id = time.time_ns() & ((1 << 63) - 1)
+    if session_id == 0:
+        session_id = 1
+
+    begin_metadata: dict[str, object] = {
+        "installSessionId": str(session_id),
+        "appId": app_id,
+        "version": version,
+        "bundleHash": package_sha256,
+        "packageSize": str(package_size),
+        "packageSha256": package_sha256,
+        "manifestSize": len(manifest_bytes),
+        "signatureSize": len(signature_bytes),
+    }
+
+    print(f"Deploying {app_id}...", flush=True)
+    with DeveloperControlClient() as client:
+        begun = False
+        committed = False
+        try:
+            client.request(
+                DEV_CMD_DEPLOY_BEGIN,
+                begin_metadata,
+                manifest_bytes + signature_bytes,
+            )
+            begun = True
+            with package_path.open("rb") as source:
+                offset = 0
+                while True:
+                    chunk = source.read(DEVELOPER_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    client.request(
+                        DEV_CMD_DEPLOY_CHUNK,
+                        {
+                            "installSessionId": str(session_id),
+                            "offset": str(offset),
+                        },
+                        chunk,
+                    )
+                    offset += len(chunk)
+            client.request(
+                DEV_CMD_DEPLOY_COMMIT,
+                {"installSessionId": str(session_id)},
+            )
+            committed = True
+        finally:
+            if begun and not committed:
+                try:
+                    client.request(
+                        DEV_CMD_DEPLOY_ABORT,
+                        {"installSessionId": str(session_id)},
+                    )
+                except (BuildError, OSError):
+                    pass
+    print(f"Deployed: {app_id}", flush=True)
+    return app_id
+
+
+def _response_uint64(response: dict[str, object], field: str) -> int:
+    value = response.get(field, 0)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    raise BuildError(f"device returned invalid {field}: {value!r}")
+
+
+def start_development_app(app_id: str) -> tuple[int, Path]:
+    print(f"Starting {app_id}...", flush=True)
+    with DeveloperControlClient() as client:
+        response = client.request(DEV_CMD_START_APP, {"appId": app_id, "force": False})
+
+    process_id = _response_uint64(response, "processId")
+    log_path_value = response.get("logPath")
+    if process_id <= 0 or not isinstance(log_path_value, str) or not log_path_value:
+        raise BuildError("device start response did not include processId and logPath")
+
+    print(f"Started: {app_id} (pid={process_id})", flush=True)
+    print(f"Activated: {app_id}", flush=True)
+    return process_id, Path(log_path_value)
+
+
+def stop_development_app(app_id: str) -> None:
+    print(f"Stopping {app_id}...", flush=True)
+    with DeveloperControlClient() as client:
+        client.request(DEV_CMD_STOP_APP, {"appId": app_id, "force": False})
+
+
+def get_development_log_path(app_id: str) -> Path:
+    with DeveloperControlClient() as client:
+        response = client.request(DEV_CMD_GET_APP_LOG_PATH, {"appId": app_id, "force": False})
+    log_path_value = response.get("logPath")
+    if not isinstance(log_path_value, str) or not log_path_value:
+        raise BuildError("device did not return an App log path")
+    return Path(log_path_value)
+
+
+def process_is_running(process_id: int) -> bool:
+    if process_id <= 0:
+        return False
+    try:
+        for line in Path(f"/proc/{process_id}/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("State:"):
+                fields = line.split()
+                return len(fields) >= 2 and fields[1] != "Z"
+    except OSError:
+        return False
+    return True
+
+
+def follow_app_log(log_path: Path, process_id: int | None = None) -> None:
+    if not log_path.is_file():
+        raise BuildError(f"App log file not found: {log_path}")
+
+    print("Note: only logs written to console (stdout/stderr) are followed.", flush=True)
+    print(f"**Application log folder: {log_path.with_suffix('')}", flush=True)
+    print(f"--- following {log_path} ---", flush=True)
+    with log_path.open("rb") as source:
+        while True:
+            chunk = source.read(64 * 1024)
+            if chunk:
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                continue
+
+            # AppService truncates the same per-App log file on every launch.
+            # Reset to the beginning when a separately invoked `kavio log` spans a restart.
+            try:
+                if log_path.stat().st_size < source.tell():
+                    source.seek(0)
+                    continue
+            except OSError:
+                pass
+
+            if process_id is not None and not process_is_running(process_id):
+                # Drain bytes written immediately before process exit.
+                time.sleep(0.05)
+                chunk = source.read(64 * 1024)
+                if chunk:
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                return
+            time.sleep(0.1)
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    project = resolve_project(args.project)
+    package_path = build_development_package(project, args)
+    deploy_development_package(package_path)
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    project = resolve_project(args.project)
+    package_path = build_development_package(project, args)
+    app_id = deploy_development_package(package_path)
+    process_id, log_path = start_development_app(app_id)
+    try:
+        follow_app_log(log_path, process_id)
+    except KeyboardInterrupt:
+        print("\nStopping App after Ctrl+C...", flush=True)
+        stop_development_app(app_id)
+        print(f"Stopped: {app_id}", flush=True)
+        return 0
+
+    print(f"App exited: {app_id}", flush=True)
+    return 0
+
+
+def cmd_log(args: argparse.Namespace) -> int:
+    project = resolve_project(args.project)
+    package = project["package"]
+    app_id = require_string(package.get("appId"), f"{project['project_path']}: package.appId")
+    log_path = get_development_log_path(app_id)
+    try:
+        follow_app_log(log_path)
+    except KeyboardInterrupt:
+        print("\nLog follow stopped.", flush=True)
+    return 0
+
+
 def cmd_list(_: argparse.Namespace) -> int:
     errors: list[str] = []
     projects = discover_projects(errors=errors)
@@ -866,6 +1233,9 @@ def print_new_help() -> None:
         "After creating a project:\n"
         "  ./kavio list                         # verify the project was discovered\n"
         "  ./kavio build MyFirstApp             # build its Device artifact\n"
+        "  ./kavio deploy MyFirstApp            # build and install for development\n"
+        "  ./kavio run MyFirstApp               # build, install, start and follow logs\n"
+        "  ./kavio log MyFirstApp               # follow the installed App log\n"
         "  ./kavio pack MyFirstApp              # build and create the .kap package\n"
         "  ./kavio build_all                    # build all discovered projects\n\n"
     )
@@ -984,7 +1354,7 @@ def create_parser() -> argparse.ArgumentParser:
         prog="kavio",
         description=(
             "Kavio Device App development tool. Create projects from templates, "
-            "discover projects, build SDK/App artifacts, and package installable .kap files.\n"
+            "discover projects, build/deploy Apps, and package installable .kap files.\n"
             "A directory is recognized as a project only when it contains kavio_project.json."
         ),
         epilog=(
@@ -992,11 +1362,15 @@ def create_parser() -> argparse.ArgumentParser:
             "  1. ./kavio new MyApp --template cpp/kavio_widget\n"
             "  2. ./kavio list\n"
             "  3. ./kavio build MyApp\n"
-            "  4. ./kavio pack MyApp\n\n"
+            "  4. ./kavio deploy MyApp\n"
+            "  5. ./kavio pack MyApp\n\n"
             "Common commands:\n"
             "  ./kavio new --help       Show project creation syntax and template choices.\n"
             "  ./kavio doctor --all     Check all SDK build dependencies.\n"
             "  ./kavio build sdk        Build the complete Device SDK.\n"
+            "  ./kavio deploy MyApp     Build and install a development App on this device.\n"
+            "  ./kavio run MyApp        Build, install, start, activate and follow logs.\n"
+            "  ./kavio log MyApp        Follow the current installed App log.\n"
             "  ./kavio build_all        Build every discovered Device App.\n"
             "  ./kavio pack_all         Build and package every discovered Device App."
         ),
@@ -1047,6 +1421,63 @@ def create_parser() -> argparse.ArgumentParser:
     add_common_build_options(p_build)
     p_build.set_defaults(func=cmd_build)
 
+    p_deploy = sub.add_parser(
+        "deploy",
+        help="build and install one Device App through the local development deploy channel",
+        description=(
+            "Build one App and install it through Platform's independent board-local "
+            "development deploy channel. The App remains stopped after deployment."
+        ),
+        epilog=(
+            "The device options 'Local Development Deploy' and, for unsigned packages, "
+            "'Allow Unverified Apps' must be enabled.\n\n"
+            "Examples:\n"
+            "  ./kavio deploy MyApp\n"
+            "  ./kavio deploy MyApp --release\n"
+            "  ./kavio deploy MyApp --jobs 4"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_deploy.add_argument("project", help="project key shown by './kavio list'")
+    add_common_build_options(p_deploy)
+    p_deploy.set_defaults(func=cmd_deploy)
+
+    p_run = sub.add_parser(
+        "run",
+        help="build, install, start and foreground one Device App, then follow its log",
+        description=(
+            "Build and deploy one App, start it through the device App lifecycle, make it the "
+            "active screen App, and follow stdout/stderr until the App exits or Ctrl+C is pressed. "
+            "Ctrl+C stops the App before returning to the shell."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  ./kavio run MyApp\n"
+            "  ./kavio run MyApp --release\n"
+            "  ./kavio run MyApp --jobs 4"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_run.add_argument("project", help="project key shown by './kavio list'")
+    add_common_build_options(p_run)
+    p_run.set_defaults(func=cmd_run)
+
+    p_log = sub.add_parser(
+        "log",
+        help="follow the current log of an installed Device App",
+        description=(
+            "Resolve the App ID from the project and follow its current stdout/stderr log. "
+            "Ctrl+C only stops log following and does not stop the App."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  ./kavio log MyApp"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_log.add_argument("project", help="project key shown by './kavio list'")
+    p_log.set_defaults(func=cmd_log)
+
     p_pack = sub.add_parser(
         "pack",
         help="build and package one Device App",
@@ -1096,8 +1527,8 @@ def create_parser() -> argparse.ArgumentParser:
             "  ./kavio new examples/PythonMonitor --template python/kavio_widget \\\n"
             "      --app-id com.example.python-monitor --name \"Python Monitor\"\n"
             "  ./kavio new tools/RawDisplay --template lua/framebuffer\n\n"
-            "After creation, run './kavio list', then './kavio build <project-path>' or "
-            "'./kavio pack <project-path>'.\n\n"
+            "After creation, run './kavio list', then './kavio deploy <project-path>' "
+            "for board-local development or './kavio pack <project-path>' for a package.\n\n"
             "Template choices:\n" + template_guide
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

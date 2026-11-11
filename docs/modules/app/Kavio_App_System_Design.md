@@ -101,8 +101,8 @@ Device Component（设备组件） 支持两种运行类型：
 15. Python 环境创建属于安装事务，环境创建失败即安装失败。
 16. AppService 必须提供可查询、可上报的安装、环境、部署和运行诊断日志。
 17. 官方签名是正常模式下的唯一代码信任路径。
-18. 未签名代码只能在对应一侧开发模式开启时安装和运行。
-19. 开发模式是运行时强制门槛，不只是安装时风险提示。
+18. 未签名 Host 代码受上位机开发授权控制；未签名 Device App 受设备侧 `allow_unverified_apps` 独立开关控制。
+19. 设备侧开发能力以具体选项强制执行，不使用统一的设备开发者总开关。
 20. 内置 App 与用户安装 App 根据加载目录和安装来源区分，不能由安装包自行声明为内置 App。
 21. Platform 核心能力必须保留在 Platform 内部，只有可独立失败和升级的业务功能才做成 App。
 
@@ -116,7 +116,7 @@ KavioWin（Kavio 上位机）
 ├── AppManager（应用管理器）
 ├── HostComponentRuntimeService（Host Component（主机组件）运行服务）
 ├── HostDeveloperModeService（上位机开发模式服务）
-├── DeviceDeveloperModeProxy（设备开发模式代理）
+├── DeviceDeveloperOptionsProxy（设备开发选项代理）
 ├── AppControlProxy（Device Component（设备组件） 控制代理）
 ├── GenericConfigUI（通用声明式配置界面）
 ├── AppIpcServer（统一命名管道服务端）
@@ -136,7 +136,7 @@ Platform（设备平台程序）
 │   ├── AppRuntimeManager（应用运行管理器）
 │   ├── PythonEnvironmentManager（Python 环境管理器）
 │   ├── AppProcessMonitor（应用进程监控器）
-│   └── DeviceDeveloperModeManager（设备开发模式管理器）
+│   └── AppDeveloperOptionsManager（App 开发选项管理）
 ├── IPCServer（本地进程间通信服务端）
 ├── AppMessageRouter（应用消息路由器）
 └── UsbBridge（USB 桥接）
@@ -522,7 +522,7 @@ Platform 仍可保留设备侧的运行期自动启动设置能力；如果用�
 - 安装根目录；
 - 运行用户；
 - 上位机开发模式；
-- 设备开发模式；
+- 设备侧 App 开发选项；
 - 是否允许未签名代码运行；
 - 是否允许覆盖系统 App；
 - Platform 核心权限；
@@ -646,7 +646,7 @@ Python 环境不单独作为持久化 App 状态。环境创建属于安装事�
 停止中
 异常退出
 启动失败
-开发模式关闭，禁止运行
+未验证应用不允许，禁止运行
 ```
 
 ### 8.3 Host Component（主机组件）状态
@@ -684,10 +684,10 @@ Kavio 官方签名
 
 ```text
 允许运行
-需要上位机开发模式
-需要设备开发模式
-需要双端开发模式
-开发模式已关闭，运行被阻止
+需要上位机开发授权
+设备端未验证应用不允许
+双端包缺少对应开发授权
+运行被开发策略阻止
 ```
 
 ### 8.7 界面展示示例
@@ -707,7 +707,7 @@ Host Component（主机组件）：已停止
 Device Component（设备组件）：已停止
 Host Component（主机组件）：已停止
 信任：签名未验证
-运行授权：需要双端开发模式
+运行授权：双端包缺少对应开发授权
 ```
 
 ---
@@ -967,7 +967,7 @@ Python 环境创建必须在临时目录执行：
 只有以下条件全部满足时，应用才进入“已安装”：
 
 - App 文件完整；
-- 签名校验完成，或开发模式风险确认完成；
+- 签名校验完成，或设备已允许未验证应用；
 - Python 环境创建成功；
 - `env/bin/python` 可执行；
 - 主脚本存在；
@@ -1029,7 +1029,7 @@ AppService 使用参数数组直接执行：
 
 必须使用 `execve（执行程序）`，不能通过 shell 拼接命令。
 
-原生 App 和 Python App 都使用 `AppServiceConfigPb.run_user` 指定用户运行，当前默认 `vs680`。
+原生 App 和 Python App 都使用 `AppServiceConfigPb.run_user` 指定用户运行，当前固定为 `kavio`。
 
 ---
 
@@ -1050,16 +1050,16 @@ AppService 使用参数数组直接执行：
 | 状态 | 处理 |
 |---|---|
 | Kavio 官方签名有效 | 正常安装和运行 |
-| 未提供签名 | 归类为“签名未验证”，需要开发模式 |
-| 非官方或未知签名 | 归类为“签名未验证”，需要开发模式 |
+| 未提供签名 | 归类为“签名未验证”，设备端必须开启“允许未验证应用” |
+| 非官方或未知签名 | 归类为“签名未验证”，设备端必须开启“允许未验证应用” |
 | 声称使用 Kavio 官方 key_id 但签名无效 | 视为损坏或篡改，拒绝安装 |
 | 官方签名有效但文件摘要不一致 | 视为损坏或篡改，拒绝安装 |
 
 用户自行编写的程序应不携带伪造的官方签名声明，按未签名开发包安装。
 
-### 12.3 双端开发模式
+### 12.3 开发者入口与设备开发选项
 
-系统增加两个相互独立的开发模式：
+KavioWin 保留上位机“开发者模式”入口。该开关只影响上位机侧开发功能和开发者菜单展示，不作为设备端总授权开关下发。设备端仅持久化具体能力开关。
 
 #### host_developer_mode（上位机开发模式）
 
@@ -1069,65 +1069,49 @@ AppService 使用参数数组直接执行：
 - 关闭时，当前运行的未签名 Kavio App Host 必须停止；
 - 关闭后，已经安装的未签名 DLL 保留文件，但禁止再次启动。
 
-#### device_developer_mode（设备开发模式）
+#### 设备侧开发选项
 
-- 持久化在设备 Platform 系统配置中；
-- 可以由 KavioWin 设置页面远程打开或关闭；
-- Device Component（设备组件）Service 独立校验，不能只信任 KavioWin 请求；
-- 决定未签名Device Component（设备组件） 是否允许安装和运行；
-- 关闭时，当前运行的未签名Device Component（设备组件） 必须停止；
-- 关闭后，已经安装的未签名 App 保留文件和数据，但禁止再次启动；
-- 未签名 auto_start App 在设备开发模式关闭时不得自动启动。
+设备端不再维护统一的 `device_developer_mode`，而是保存以下独立能力开关：
+
+- `allow_unverified_apps`：允许安装和运行未通过 Kavio 官方签名验证的 Device App；关闭后停止当前运行的未验证 App，并禁止其再次启动和 auto_start；
+- `local_development_deploy_enabled`：控制板端本地开发部署通道。关闭时调试命令 Socket 不存在；开启后允许 `kavio deploy/run` 通过独立通道提交正常 App 安装事务；
+- `app_integrity_check_enabled`：控制 App 启动前是否按 manifest 对已安装文件执行存在性、类型、size 和 SHA-256 完整性校验。关闭后仍保留入口文件、运行时环境和签名/Manifest 结构等启动必需检查。
 
 ### 12.4 不同应用包的开发模式要求
 
 | 应用包内容 | 未签名时的要求 |
 |---|---|
-| 仅Device Component（设备组件） | 必须开启设备开发模式 |
-| 仅上位机组件（未来预留） | 必须开启上位机开发模式 |
-| Device Component（设备组件） + Host Component DLL | 必须同时开启上位机和设备开发模式 |
+| 仅Device Component（设备组件） | 设备端必须开启“允许未验证应用” |
+| 仅上位机组件（未来预留） | 必须满足上位机未签名 Host Component 的开发授权 |
+| Device Component（设备组件） + Host Component DLL | 设备端必须开启“允许未验证应用”，上位机同时满足 Host Component 开发授权 |
 
-应用包是一个安装事务。双端未签名包如果只有一侧开发模式开启，则整个安装失败，不做部分安装。
+应用包是一个安装事务。双端未签名包如果任一侧缺少对应的未签名代码授权，则整个安装失败，不做部分安装。
 
-### 12.5 安装时风险确认
+### 12.5 未验证应用安装策略
 
-开发模式只是允许进入未签名流程，不能代替用户确认。
+设备端是否允许安装和运行未验证 Device Component（设备组件），统一由 `allow_unverified_apps` 控制。安装请求不再携带额外的单次风险确认字段。
 
-每次安装或覆盖更新未签名包时，KavioWin 必须展示：
+当该选项关闭时，Platform 直接拒绝未验证 Device Component 的安装请求，上位机应提示用户在“开发与调试”中开启“允许未验证应用”后重试。
 
-- 应用名称、版本和 app_id；
-- 包 SHA-256；
-- 是否包含Host Component DLL；
-- 设备入口程序；
-- 是否为 Python；
-- 是否需要在线下载依赖；
-- 未签名代码可能访问的主机或设备资源；
-- 在线依赖可能引入第三方供应链代码的风险；
-- 当前开启的开发模式。
+KavioWin 可以展示应用名称、版本、`app_id`、包 SHA-256、组件类型和依赖信息等风险提示，但这些提示不参与 Platform 的安装授权判定。
 
-用户必须执行明确确认后才提交安装。
-
-### 12.6 Platform 和 KavioWin 的双重强制检查
+### 12.6 Platform 和 KavioWin 的强制检查
 
 未签名Device Component（设备组件）：
 
 ```text
-KavioWin 风险确认
-+ device_developer_mode=true
-+ AppService 安装时再次校验
+allow_unverified_apps=true
++ AppService 安装时校验
 + AppService 每次启动前再次校验
 ```
 
 未签名Host Component DLL：
 
 ```text
-KavioWin 风险确认
-+ host_developer_mode=true
+host_developer_mode=true
 + HostComponentRuntimeService 安装时再次校验
 + Kavio App Host 每次启动前再次校验
 ```
-
-安装请求中的“用户已确认”标志不能替代开发模式。
 
 ### 12.7 开发模式关闭时的处理
 
@@ -1138,23 +1122,26 @@ KavioWin 风险确认
 3. 不删除安装文件和配置；
 4. 官方签名应用不受影响。
 
-关闭设备开发模式：
+关闭设备端“允许未验证应用”：
 
-1. AppService 停止所有正在运行的未签名Device Component（设备组件）；
-2. 将其状态设置为“开发模式关闭，禁止运行”；
+1. AppService 停止所有正在运行的未验证 Device Component（设备组件）；
+2. 将其状态设置为“未验证应用不允许运行”；
 3. auto_start 不再启动这些 App；
 4. 不删除安装文件、Python 环境和 App 数据；
 5. 官方签名 App 和固件内置 App 不受影响。
 
-重新开启开发模式后，未签名组件重新获得手动启动和 auto_start 资格，但不会因为模式切换自动立即启动。
+重新开启“允许未验证应用”后，未验证 Device App 重新获得手动启动和 auto_start 资格，但不会因为选项切换自动立即启动。
 
 ### 12.8 管理界面提示
 
-开发模式打开时，KavioWin 顶部持续显示明显提示：
+KavioWin 顶层“开发者模式”只控制上位机开发能力和“开发与调试”二级菜单展示。设备侧实际能力在二级菜单中分别显示和控制，例如：
 
 ```text
-上位机开发模式已开启：允许运行签名未验证的主机代码
-设备开发模式已开启：允许设备运行签名未验证的应用
+开发者模式                     [开关，仅上位机]
+  └─ 开发与调试
+       允许未验证应用            [设备开关]
+       启用本地开发部署          [设备开关]
+       App 完整性校验             [设备开关]
 ```
 
 每个未签名应用条目持续显示：
@@ -1163,7 +1150,7 @@ KavioWin 风险确认
 签名未验证
 ```
 
-即使开发模式已经开启，也不能把未签名应用显示为“已信任”。
+即使“允许未验证应用”已经开启，也不能把未签名应用显示为“已信任”。
 
 ---
 
@@ -1173,14 +1160,14 @@ KavioWin 风险确认
 
 1. KavioWin 解析应用包并进行本地检查；
 2. 对官方包进行签名校验；
-3. 对未签名包检查相关开发模式并显示风险确认；
+3. 对未签名包检查对应的未验证应用授权；
 4. 停止目标 Device Component（设备组件）；
 5. 如果存在 Host Component（主机组件），停止对应 Kavio App Host；
 6. Platform 创建安装会话和临时目录；
 7. 分片传输设备文件；
 8. AppService 记录并上报接收和校验日志；
 9. 校验文件大小、摘要和清单；
-10. 设备端再次执行签名或开发模式检查；
+10. 设备端再次执行签名和“允许未验证应用”策略检查；
 11. 原生 App 设置权限；Python App 创建独立虚拟环境；
 12. 准备设备端新版本并完成必要校验，但在整个安装事务提交前不创建新的 AppRegistry 条目；
 13. 安装并校验 Host Component（主机组件）（如果存在）；
@@ -1197,7 +1184,7 @@ KavioWin 风险确认
 ```text
 host_developer_mode=true
 且
-device_developer_mode=true
+allow_unverified_apps=true
 ```
 
 任一条件不满足，整个安装事务失败。
@@ -1259,7 +1246,7 @@ AppService 负责：
 - PID 到 app_id 映射；
 - 进程退出监控；
 - auto_start 调度；
-- 设备开发模式检查；
+- 设备侧 App 开发选项检查；
 - 未签名 App 运行资格检查；
 - 状态事件上报；
 - 通信路由所需 App 身份查询。
@@ -1285,10 +1272,9 @@ message AppServiceConfigPb {
   uint32 stop_timeout_ms = 3;
   string run_user = 4;
   string builtin_app_root_dir = 5;
-  bool developer_mode = 6;
-  bool allow_online_python_install = 7;
-  repeated string conda_channels = 8;
-  string pip_index_url = 9;
+  bool allow_online_python_install = 6;
+  repeated string conda_channels = 7;
+  string pip_index_url = 8;
 }
 ```
 
@@ -1300,11 +1286,10 @@ app_root_dir                  = /home/kavio/.kavio/apps
 install_temp_dir              = /home/kavio/data/.kavio/apps/.installing
 stop_timeout_ms               = 3000
 run_user                      = kavio
-developer_mode                = false
 allow_online_python_install   = true
 ```
 
-字段 `developer_mode` 表示设备开发模式。上位机开发模式不放入该配置，由 KavioWin 本地管理。
+设备侧开发能力不放入 `AppServiceConfigPb`。`allow_unverified_apps`、`local_development_deploy_enabled` 和 `app_integrity_check_enabled` 属于用户配置 `SystemCoreUserConfigPb.app_developer`；KavioWin 顶层“开发者模式”仅由上位机本地管理。
 
 ### 14.3 进程监控记录
 
@@ -1316,10 +1301,10 @@ allow_online_python_install   = true
 - 启动时间；
 - 运行类型；
 - 信任状态；
-- 启动时设备开发模式状态；
+- 启动时设备 App 开发选项状态；
 - 退出时间；
 - 退出码或信号；
-- 是否因关闭开发模式而停止；
+- 是否因关闭对应开发授权而停止；
 - 最后错误。
 
 ---
@@ -1450,9 +1435,9 @@ MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App�
 ### 16.2 信任规则
 
 - 固件镜像内置 App 由固件发布链信任；
-- 内置 App 不依赖设备开发模式；
-- 用户安装的官方签名 App 不依赖设备开发模式；
-- 用户安装的未签名 App 必须依赖设备开发模式。
+- 内置 App 不依赖“允许未验证应用”；
+- 用户安装的官方签名 App 不依赖“允许未验证应用”；
+- 用户安装的未签名 App 必须依赖 `allow_unverified_apps=true`。
 
 ### 16.3 同名规则
 
@@ -1534,20 +1519,21 @@ MFS、TUN 等由 KavioWin 和 Platform 直接实现的内置服务不属于 App�
 | App 未运行或 SystemChannel 不可用 | 配置入口禁用或提示先启动并连接设备 |
 | 签名未验证 | 持续显示风险标记和运行授权条件 |
 | 目录缺失、空目录、Manifest/元信息损坏 | 不允许启动；使用 App ID + 默认图标展示；允许卸载/清理 |
-| 开发模式关闭 | 未签名对应组件的启动按钮禁用 |
+| 对应开发授权关闭 | 未签名对应组件的启动按钮禁用 |
 
-### 17.3 开发模式设置
+### 17.3 开发与调试设置
 
-设置页面提供两个独立开关：
+KavioWin 保留顶层“开发者模式”，该开关不下发设备。开启后展示“开发与调试”二级菜单，其中设备侧能力使用独立开关：
 
 ```text
-上位机开发模式
-设备开发模式
+开发者模式                     [仅上位机]
+  └─ 开发与调试
+       允许未验证应用            [设备]
+       启用本地开发部署          [设备]
+       App 完整性校验             [设备]
 ```
 
-操作设备开发模式要求设备在线。KavioWin 将请求发送给 Platform，最终状态以 Platform 返回结果为准。
-
-关闭开发模式前，界面提示将停止对应一侧所有正在运行的未签名代码。
+设备侧三个开关通过 UserConfig 读写，要求设备在线。关闭“允许未验证应用”时，正在运行的未验证 Device App 会被停止；关闭“启用本地开发部署”后，板端开发部署入口立即不可用。
 
 ## 18. 协议定义
 
@@ -1593,14 +1579,20 @@ SystemChannel 请求和应答覆盖：
 - 安装开始、安装分片、安装提交和安装取消；
 - 卸载、启动、停止、查询和列表；
 - 自动启动设置；
-- 设备开发模式查询和设置；
+- UserConfig 读取和保存（其中包含设备侧 App 开发选项）；
 - App Configuration 读取和保存；
 - 内置服务查询和启停；
 - Device Component（设备组件） 和内置服务状态事件。
 
 AppService 不保存 Config Definition 业务配置；App Configuration通过 USB SystemChannel 路由到目标Device Component（设备组件），由Device Component（设备组件） 校验、应用和持久化。
 
-### 18.2 ipc.proto
+### 18.2 板端本地开发部署
+
+`kavio deploy/run` 使用独立于 Device SDK IPC 的板端开发部署通道，并受 `local_development_deploy_enabled` 控制。开发部署仍使用与正常安装一致的应用包校验、环境准备和安装结果。
+
+`kavio deploy <App>` 只构建并安装 Device Component，安装完成后保持停止；`kavio run <App>` 在部署完成后启动 Device Component、切换到该运行实例并持续跟踪本次运行日志。`kavio run` 中按 `Ctrl+C` 会停止日志跟踪并停止该 App；`kavio log <App>` 只跟踪当前 App 日志，按 `Ctrl+C` 不停止 App。工程声明的 Host Component 不参与板端本地开发部署，正式 `kavio pack` 仍按完整工程定义打包。
+
+### 18.3 ipc.proto
 
 `MSG_A2P_DATA_COMM_CHANNEL`（App → Platform）与 `MSG_P2A_DATA_COMM_CHANNEL`（Platform → App）分别承载业务数据。IPC 协议定义：
 
@@ -1687,7 +1679,7 @@ enum class AppStartSource {
 
 enum class AppRunAuthorization {
     Allowed,
-    DeviceDeveloperModeRequired,
+    UnverifiedAppNotAllowed,
     PackageInvalid
 };
 ```
@@ -1725,16 +1717,16 @@ struct HostComponentRecord {
 12. Python 环境可在线创建，也可从离线归档恢复；环境失败即整个应用安装失败。
 13. Python 环境不作为独立界面状态展示。
 14. 官方签名是正常模式下的代码信任路径。
-15. 系统分别提供上位机开发模式和设备开发模式。
-16. 未签名Host Component DLL 在上位机开发模式下可以安装和运行。
-17. 未签名Device Component（设备组件） 在设备开发模式下可以安装和运行。
-18. 未签名双端包要求双端开发模式同时开启。
-19. 开发模式关闭后，对应一侧已经安装的未签名代码保留但立即失去运行资格，正在运行的进程必须停止。
-20. 管理页面持续显示开发模式风险提示和“签名未验证”标记。
+15. KavioWin 保留上位机开发者模式；设备端不提供统一开发者总开关，只保存具体开发能力选项。
+16. 未签名 Host Component DLL 受上位机开发授权控制。
+17. 未签名 Device Component（设备组件）只有在 `allow_unverified_apps=true` 时才可安装和运行。
+18. `local_development_deploy_enabled=true` 时才开放独立板端开发部署能力，`kavio deploy/run` 与正常安装使用一致的应用校验和运行规则。
+19. `app_integrity_check_enabled=false` 时允许开发者修改已部署 App 文件后继续启动，但仍保留入口、运行环境以及 Manifest/签名结构等必要检查。
+20. 管理页面持续显示开发授权风险提示和“签名未验证”标记。
 21. 内置 App 和用户 App 按来源区分，系统内置 App 不允许普通覆盖或卸载。
 22. 一个 Kavio App Host 对应一个应用，所有 Kavio App Host 连接同一个 KavioWin Named Pipe 服务端，但各自使用独立连接。
 23. Kavio App Host 是第三方 DLL 的生命周期容器和原始数据桥，不参与 Host Component 与Device Component（设备组件） 的业务协议。
 24. App Configuration仅由 KavioWin、SystemChannel、Platform 和Device Component（设备组件） 管理，Host Component 不接入该配置链路。
 25. App 身份通过 SO_PEERCRED 实际 PID 绑定，并只能使用自身 app_id Channel。
 
-该方案兼顾官方应用、内部开发、用户自编 Python 脚本、纯设备任务、主机辅助能力和现场诊断，同时将正常运行环境与开发模式下的未签名代码风险明确隔离。
+该方案兼顾官方应用、内部开发、用户自编 Python 脚本、纯设备任务、主机辅助能力和现场诊断，同时将正常运行环境与开发授权下的未签名代码风险明确隔离。

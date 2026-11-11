@@ -43,7 +43,7 @@ static_assert(KAVIO_STATUS_USB_BODY_CASE_NOT_SUPPORTED == static_cast<int32_t>(k
 static_assert(KAVIO_STATUS_USB_APP_VERSION_MISMATCH == static_cast<int32_t>(kavio::StatusCode::USB_AppVersionMismatch), "C ABI status code mismatch");
 static_assert(KAVIO_STATUS_USB_APP_SIGNATURE_INVALID == static_cast<int32_t>(kavio::StatusCode::USB_AppSignatureInvalid), "C ABI status code mismatch");
 static_assert(KAVIO_STATUS_USB_APP_FILE_HASH_MISMATCH == static_cast<int32_t>(kavio::StatusCode::USB_AppFileHashMismatch), "C ABI status code mismatch");
-static_assert(KAVIO_STATUS_USB_APP_DEVELOPER_MODE_REQUIRED == static_cast<int32_t>(kavio::StatusCode::USB_AppDeveloperModeRequired), "C ABI status code mismatch");
+static_assert(KAVIO_STATUS_USB_APP_UNVERIFIED_APP_NOT_ALLOWED == static_cast<int32_t>(kavio::StatusCode::USB_AppUnverifiedAppNotAllowed), "C ABI status code mismatch");
 static_assert(KAVIO_STATUS_USB_APP_ENVIRONMENT_INSTALL_FAILED == static_cast<int32_t>(kavio::StatusCode::USB_AppEnvironmentInstallFailed), "C ABI status code mismatch");
 static_assert(KAVIO_STATUS_USB_APP_UNSUPPORTED_RUNTIME == static_cast<int32_t>(kavio::StatusCode::USB_AppUnsupportedRuntime), "C ABI status code mismatch");
 static_assert(KAVIO_STATUS_USB_APP_INSTALL_IN_PROGRESS == static_cast<int32_t>(kavio::StatusCode::USB_AppInstallInProgress), "C ABI status code mismatch");

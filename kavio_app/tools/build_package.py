@@ -682,9 +682,9 @@ def main() -> int:
         print(f"app_id: {manifest['appId']}")
         print(f"files: {len(package_files)}")
         if "host" in manifest:
-            print("Enable both Host development mode and Device development mode before installation.")
+            print("Enable Host development mode as required and enable Allow Unverified Apps on the device before installation.")
         else:
-            print("Enable Device development mode before installing this unsigned device-only package.")
+            print("Enable Allow Unverified Apps on the device before installing this unsigned device-only package.")
         return 0
     except (PackageError, OSError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -7,6 +7,23 @@ local kavio = require("kavio")
 local ui = require("kavio.ui")
 local proto = require("demo_protocol")
 
+-- Lua uses the App runtime stdout/stderr log stream. The current public Lua
+-- binding does not expose the C++/Python app_logger API, so keep this small
+-- wrapper rather than introducing a second native logging interface.
+local LOG_PREFIX = "[KavioDemoLua]"
+local function log_info(event, detail)
+    print(string.format("%s [INFO] %s%s", LOG_PREFIX, event,
+        detail and (" " .. tostring(detail)) or ""))
+end
+local function log_warn(event, detail)
+    print(string.format("%s [WARN] %s%s", LOG_PREFIX, event,
+        detail and (" " .. tostring(detail)) or ""))
+end
+local function log_error(event, detail)
+    print(string.format("%s [ERROR] %s%s", LOG_PREFIX, event,
+        detail and (" " .. tostring(detail)) or ""))
+end
+
 local app = kavio.App({
     rx_enabled = true,
     rx_frame_sample_interval = 1,  -- Request every available RX frame.
@@ -58,6 +75,7 @@ end
 -- @param checksum_override integer|nil Optional precomputed checksum.
 local function send_packet(message_type, payload, request_sequence, checksum_override)
     if not device:is_comm_channel_ready() then
+        log_warn("app_channel_send_skipped", "channel_not_ready")
         return
     end
 
@@ -67,12 +85,10 @@ local function send_packet(message_type, payload, request_sequence, checksum_ove
         sequence = (sequence + 1) & 0xffffffff
     end
 
-    device:send_comm_data(proto.packet(
-        message_type,
-        packet_sequence,
-        payload or "",
-        checksum_override
-    ))
+    local packet = proto.packet(message_type, packet_sequence, payload or "", checksum_override)
+    device:send_comm_data(packet)
+    log_info("app_channel_packet_sent", string.format("type=%d sequence=%d bytes=%d",
+        message_type, packet_sequence, #packet))
 end
 
 --- Build the compact state string consumed by the Windows Host.
@@ -212,7 +228,10 @@ local function read_rx_frame(automatic)
         return device:read_latest_rx_frame()
     end)
     if not ok then
-        if not automatic then set_status(frame) end
+        if not automatic then
+            log_warn("rx_frame_read_failed", frame)
+            set_status(frame)
+        end
         return
     end
 
@@ -228,12 +247,17 @@ local function read_rx_frame(automatic)
         if rx_preview then rx_preview:set_buffer(frame, PREVIEW_WIDTH, PREVIEW_HEIGHT) end
     end)
     if not updated then
+        log_error("rx_frame_display_failed", update_error)
         buffer:release()
         if not automatic then set_status(update_error) end
         return
     end
     last_rx_frame_id = info.frame_id
     rx_reads = rx_reads + 1
+    if not automatic then
+        log_info("rx_frame_displayed", string.format("frame_id=%s size=%dx%d stride=%d bytes=%d",
+            tostring(info.frame_id), info.width, info.height, info.stride, size))
+    end
     if automatic then
         rx_fps_count = rx_fps_count + 1
     else
@@ -248,6 +272,7 @@ end
 -- --- Virtual input and TX surface helpers ---
 --- Emit key-down and key-up for a single virtual key.
 local function send_key(key_code)
+    log_info("keyboard_key_sent", "key_code=" .. tostring(key_code))
     device:send_keyboard(kavio.KeyOption.DOWN, key_code)
     device:send_keyboard(kavio.KeyOption.UP, key_code)
     set_status("Key " .. key_code .. " sent")
@@ -255,6 +280,7 @@ end
 
 --- Emit the mouse left-down and left-up pair.
 local function left_click()
+    log_info("mouse_left_click_sent")
     device:send_mouse(kavio.MouseOption.LEFT_DOWN)
     device:send_mouse(kavio.MouseOption.LEFT_UP)
     set_status("Left click sent")
@@ -263,6 +289,7 @@ end
 --- Clear the current TX surface without destroying it.
 local function clear_tx()
     if tx_surface then
+        log_info("tx_surface_clear_requested")
         tx_surface:clear()
         set_status("TX cleared")
     end
@@ -271,12 +298,14 @@ end
 -- --- H.264 stream lifecycle ---
 --- Request H.264 subscription, completed later via the callback.
 local function start_h264()
+    log_info("h264_subscribe_requested")
     device:subscribe_h264()
     set_status("H.264 subscribe requested")
 end
 
 --- Unsubscribe and close the capture output.
 local function stop_h264()
+    log_info("h264_stop_requested", "stream_id=" .. tostring(h264_stream_id))
     if h264_stream_id ~= 0 then
         device:unsubscribe_h264(h264_stream_id)
         h264_stream_id = 0
@@ -301,6 +330,7 @@ end
 --- Replace the current widget tree with a page from the shared protocol.
 -- @param page_name string One of demo_protocol.pages.
 show_page = function(page_name)
+    log_info("page_changed", "from=" .. tostring(current_page) .. " to=" .. tostring(page_name))
     rx_live = false
     rx_live_button = nil
     rx_fps_label = nil
@@ -427,6 +457,7 @@ local function handle_packet(data)
     local message_type, packet_sequence, payload, checksum = proto.parse(data)
     if not message_type then
         protocol_errors = protocol_errors + 1
+        log_warn("app_channel_invalid_packet", "errors=" .. tostring(protocol_errors))
         return
     end
 
@@ -453,11 +484,14 @@ end
 
 -- --- SDK lifecycle callbacks ---
 app:on_ready(function(context)
+    log_info("app_ready", "initializing device callbacks")
     device = context.device
 
     device:set_comm_data_callback(handle_packet)
+    log_info("app_channel_callback_registered")
     device:set_tx_surface_callback(function(_, status, surface)
         if status ~= 0 or not surface then
+            log_error("tx_surface_create_failed", "status=" .. tostring(status))
             set_status("TX failed " .. status)
             return
         end
@@ -486,31 +520,39 @@ app:on_ready(function(context)
                 height = math.min(100, info.height - 30),
             }
         )
+        log_info("tx_surface_ready", string.format("surface_id=%s size=%dx%d",
+            tostring(info.surface_id), info.width, info.height))
         set_status("TX surface " .. info.surface_id .. " ready")
     end)
 
     device:set_h264_stream_callback(function(_, status, info)
         if status ~= 0 then
+            log_error("h264_subscribe_failed", "status=" .. tostring(status))
             set_status("H.264 failed " .. status)
             return
         end
         h264_stream_id = info.stream_id
+        log_info("h264_stream_ready", "stream_id=" .. tostring(h264_stream_id))
         next_h264_seq = 0
         h264_file = io.open("/tmp/kavio_demo_lua.h264", "wb")
         set_status("H.264 stream " .. h264_stream_id)
     end)
 
     device:set_h264_invalidated_callback(function()
+        log_warn("h264_stream_invalidated")
         set_status("H.264 invalidated")
     end)
     device:set_error_callback(function(event)
+        log_error("device_error", event.message)
         set_status("Device error " .. tostring(event.message))
     end)
     device:set_config_changed_callback(function()
+        log_info("app_config_changed")
         set_status("Config changed")
     end)
 
     backend:initialize(context.presentation)
+    log_info("ui_backend_initialized")
 
     local config = device:get_app_config_json()
     local initial = config:match('"default_page"%s*:%s*"([^"]+)"') or "home"
@@ -522,6 +564,7 @@ app:on_ready(function(context)
         end
     end
     show_page(valid and initial or "home")
+    log_info("app_initialized", "initial_page=" .. tostring(current_page))
 end)
 
 app:on_tick(function()
@@ -584,6 +627,7 @@ app:on_tick(function()
 end)
 
 app:on_stopping(function()
+    log_info("app_stopping")
     stop_h264()
     if tx_surface then
         pcall(function()
@@ -591,6 +635,10 @@ app:on_stopping(function()
         end)
     end
     backend:shutdown()
+    log_info("app_stopped")
 end)
 
-os.exit(app:run())
+log_info("app_starting")
+local exit_code = app:run()
+log_info("app_exited", "exit_code=" .. tostring(exit_code))
+os.exit(exit_code)

@@ -48,7 +48,7 @@ enum StatusCode : int32_t {
     USB_AppVersionMismatch = 301,
     USB_AppSignatureInvalid = 302,
     USB_AppFileHashMismatch = 303,
-    USB_AppDeveloperModeRequired = 304,
+    USB_AppUnverifiedAppNotAllowed = 304,
     USB_AppEnvironmentInstallFailed = 305,
     USB_AppUnsupportedRuntime = 306,
     USB_AppInstallInProgress = 307,
@@ -160,8 +160,8 @@ inline const char* StatusCodeToString(StatusCode code)
         return "StatusCode::USB_AppSignatureInvalid";
     case StatusCode::USB_AppFileHashMismatch:
         return "StatusCode::USB_AppFileHashMismatch";
-    case StatusCode::USB_AppDeveloperModeRequired:
-        return "StatusCode::USB_AppDeveloperModeRequired";
+    case StatusCode::USB_AppUnverifiedAppNotAllowed:
+        return "StatusCode::USB_AppUnverifiedAppNotAllowed";
     case StatusCode::USB_AppEnvironmentInstallFailed:
         return "StatusCode::USB_AppEnvironmentInstallFailed";
     case StatusCode::USB_AppUnsupportedRuntime:

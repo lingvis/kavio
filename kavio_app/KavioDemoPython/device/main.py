@@ -7,6 +7,9 @@ managed by the native SDK; the demo does not retain borrowed frame pointers.
 """
 
 import json
+import logging
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -27,6 +30,31 @@ class KavioDemo:
     """Owns one SDK application, its active widgets, and device resources."""
     def __init__(self):
         """Initialize the SDK app, UI state, counters, and callback registrations."""
+        # KAVIO_APP_LOG_DIR is provided by the application runtime.
+        # Keep the standard Python logging API instead of a custom SDK wrapper.
+        log_dir = os.environ.get("KAVIO_APP_LOG_DIR")
+        if not log_dir:
+            raise RuntimeError("KAVIO_APP_LOG_DIR is required for Python app logging")
+        os.makedirs(log_dir, exist_ok=True)
+        self.logger = logging.getLogger("KavioDemoPython")
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
+        if not self.logger.handlers:
+            formatter = logging.Formatter(
+                "[%(asctime)s] [%(process)d:%(thread)d] [%(levelname)s] "
+                "[%(filename)s:%(lineno)d] %(message)s"
+            )
+            formatter.converter = time.gmtime
+            file_handler = logging.FileHandler(
+                os.path.join(log_dir, "KavioDemoPython.log"), encoding="utf-8"
+            )
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+            # stderr is captured by AppService and followed by `kavio run`.
+            stderr_handler = logging.StreamHandler(sys.stderr)
+            stderr_handler.setFormatter(formatter)
+            self.logger.addHandler(stderr_handler)
+        self.logger.info("KavioDemo Python starting")
         self.app = App(rx_enabled=True, rx_frame_sample_interval=1,
                        tx_enabled=True, content=None)
         self.backend = ui.LvglBackend()
@@ -67,6 +95,7 @@ class KavioDemo:
             context: Ready application context exposing device and presentation."""
         self.context = context
         self.device = context.device
+        self.logger.info("SDK ready; runtime_data=%s", self.device.runtime_data)
 
         self.device.on_comm_data(self.on_comm_data)
         self.device.on_tx_surface(self.on_tx_surface)
@@ -82,6 +111,7 @@ class KavioDemo:
         )
 
         self.backend.initialize(context.presentation)
+        self.logger.info("LVGL backend initialized")
 
         try:
             initial_page = self.device.app_config.get("default_page", "home")
@@ -90,6 +120,7 @@ class KavioDemo:
 
         if initial_page not in proto.PAGES:
             initial_page = "home"
+        self.logger.info("Initial page=%s", initial_page)
         self.show_page(initial_page)
 
     def on_stopping(self, _context):
@@ -97,6 +128,7 @@ class KavioDemo:
 
         Args:
             _context: Application context supplied by the SDK."""
+        self.logger.info("App stopping; page=%s rx_reads=%d transfer_packets=%d protocol_errors=%d", self.page, self.rx_reads, self.transfer_packets, self.protocol_errors)
         if self.h264_file is not None:
             self.h264_file.close()
             self.h264_file = None
@@ -109,6 +141,8 @@ class KavioDemo:
             self.tx_surface = None
 
         self.backend.shutdown()
+        for handler in self.logger.handlers:
+            handler.flush()
 
     # --- App Channel transport and state reporting ---
     def set_status(self, text):
@@ -133,7 +167,10 @@ class KavioDemo:
 
         if self.device.comm_channel_ready:
             packet = proto.packet(message_type, sequence, payload, checksum)
+            self.logger.info("App Channel send type=%d sequence=%d payload_bytes=%d", message_type, sequence, len(payload))
             self.device.send_comm_data(packet)
+        else:
+            self.logger.warning("App Channel send skipped: channel not ready type=%d", message_type)
 
     def state_text(self):
         """Build the compact host-readable device status report."""
@@ -156,9 +193,11 @@ class KavioDemo:
         parsed = proto.parse(bytes(data))
         if parsed is None:
             self.protocol_errors += 1
+            self.logger.warning("Invalid App Channel packet bytes=%d errors=%d", len(data), self.protocol_errors)
             return
 
         message_type, sequence, payload, checksum = parsed
+        self.logger.info("App Channel received type=%d sequence=%d payload_bytes=%d", message_type, sequence, len(payload))
 
         if message_type == proto.HELLO:
             self.send_protocol(
@@ -282,6 +321,7 @@ class KavioDemo:
 
         Args:
             page: Page key defined by the shared demo protocol."""
+        self.logger.info("Page navigation: %s -> %s", self.page, page)
         self.page = page
         self.rx_preview = None
         self.rx_live_button = None
@@ -415,6 +455,7 @@ class KavioDemo:
     def toggle_rx_live(self):
         """Start/stop continuous RX reading with the same touch button."""
         self.rx_live = not self.rx_live
+        self.logger.info("RX live preview %s", "enabled" if self.rx_live else "disabled")
         self.rx_fps_count = 0
         self.rx_fps_window_start = time.monotonic()
         if self.rx_live_button is not None:
@@ -455,6 +496,8 @@ class KavioDemo:
                 self.rx_preview.set_buffer(frame, PREVIEW_WIDTH, PREVIEW_HEIGHT)
             self.last_rx_frame_id = frame_id
             self.rx_reads += 1
+            if not automatic:
+                self.logger.info("RX frame read width=%s height=%s stride=%s frame_id=%s bytes=%d", info.get("width"), info.get("height"), info.get("stride"), frame_id, len(frame.buffer))
             if automatic:
                 self.rx_fps_count += 1
             else:
@@ -464,15 +507,18 @@ class KavioDemo:
                 )
         except Exception as exc:
             if not automatic:
+                self.logger.exception("RX frame read failed")
                 self.set_status(f"RX: {exc}")
 
     # --- TX surfaces and input events ---
     def on_tx_surface(self, _request_id, status, surface):
         """Populate a newly created TX surface with a BGRA8888 test image."""
         if status != 0 or surface is None:
+            self.logger.error("TX surface creation failed request_id=%s status=%s", _request_id, status)
             self.set_status(f"TX create failed: {status}")
             return
 
+        self.logger.info("TX surface created request_id=%s info=%s", _request_id, surface.info)
         self.tx_surface = surface
         info = surface.info
         width = info["width"]
@@ -508,12 +554,14 @@ class KavioDemo:
 
     def send_key(self, key_code):
         """Send a complete keyboard key press (DOWN followed by UP)."""
+        self.logger.info("Keyboard key requested key_code=%s", key_code)
         self.device.send_keyboard(KeyOption.DOWN, key_code)
         self.device.send_keyboard(KeyOption.UP, key_code)
         self.set_status(f"Key {key_code} sent")
 
     def left_click(self):
         """Send a complete left mouse click."""
+        self.logger.info("Mouse left click requested")
         self.device.send_mouse(MouseOption.LEFT_DOWN)
         self.device.send_mouse(MouseOption.LEFT_UP)
         self.set_status("Left click sent")
@@ -521,15 +569,18 @@ class KavioDemo:
     # --- H.264 capture lifecycle ---
     def start_h264(self):
         """Request H.264 subscription; completion is asynchronous."""
+        self.logger.info("H.264 subscribe requested")
         self.device.subscribe_h264()
         self.set_status("H.264 subscribe requested")
 
     def on_h264_stream(self, _request_id, status, info):
         """Open an H.264 capture file after successful subscription."""
         if status != 0:
+            self.logger.error("H.264 subscription failed request_id=%s status=%s", _request_id, status)
             self.set_status(f"H.264 failed: {status}")
             return
 
+        self.logger.info("H.264 stream ready request_id=%s info=%s", _request_id, info)
         self.h264_stream = info["stream_id"]
         self.next_h264_seq = 0
         path = Path("/tmp/kavio_demo_python.h264")
@@ -539,6 +590,7 @@ class KavioDemo:
     def stop_h264(self):
         """Unsubscribe and close the H.264 capture file."""
         if self.h264_stream:
+            self.logger.info("H.264 unsubscribe stream_id=%d", self.h264_stream)
             self.device.unsubscribe_h264(self.h264_stream)
             self.h264_stream = 0
 
@@ -552,8 +604,11 @@ class KavioDemo:
     def read_config(self):
         """Read and display a bounded configuration JSON excerpt."""
         try:
-            self.set_status(self.device.get_app_config_json()[:160])
+            config = self.device.get_app_config_json()
+            self.logger.info("App config read bytes=%d", len(config))
+            self.set_status(config[:160])
         except Exception as exc:
+            self.logger.exception("App config read failed")
             self.set_status(str(exc))
 
     def update_config(self):
@@ -561,9 +616,11 @@ class KavioDemo:
         try:
             config = self.device.app_config
             config["render_fps"] = 30
+            self.logger.info("App config update requested: render_fps=30")
             self.device.update_app_config(config)
             self.set_status("render_fps updated to 30")
         except Exception as exc:
+            self.logger.exception("App config update failed")
             self.set_status(str(exc))
 
     def refresh_runtime(self):

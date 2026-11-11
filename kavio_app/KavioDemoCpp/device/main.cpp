@@ -8,6 +8,7 @@
  * worker threads; use the pending-work queue before touching LVGL objects.
  */
 
+#include <KLogger.h>
 #include <kavio/App.h>
 #include <kavio/Device.h>
 #include <kavio/Keyboard.h>
@@ -192,6 +193,12 @@ public:
     /** Start the SDK lifecycle and return a process exit status. */
     int Run()
     {
+        const auto log_status = kavio::logging::Logger::Init("main", kavio::logging::Level::Info);
+        if (!log_status.ok()) {
+            std::cerr << "Logger initialization failed: " << log_status.message << '\n';
+            return 1;
+        }
+        KLOGI("KavioDemo C++ starting");
         kavio::AppOptions options;
         options.client_name = "kavio_demo_cpp";
         options.rx_enabled = true;
@@ -202,18 +209,22 @@ public:
 
         kavio::App app(options);
         app.on_ready([this, &app](kavio::AppContext& context) {
+            KLOGI("SDK ready");
             device_ = &context.device();
             SetupDeviceHandlers();
 
             const kavio::Status status = view_.Initialize(context.presentation());
             if (!status.ok()) {
+                KLOGE("LVGL backend initialization failed: {}", status.message);
                 std::cerr << "LVGL backend initialization failed: " << status.message << '\n';
                 startup_failed_.store(true);
                 app.request_stop();
                 return;
             }
 
+            KLOGI("LVGL backend initialized");
             ApplyConfig(true);
+            KLOGI("Initial configuration loaded");
             CreateUi();
             const auto now = std::chrono::steady_clock::now();
             next_ui_update_ = now;
@@ -260,6 +271,7 @@ public:
         });
 
         app.on_stopping([this](kavio::AppContext&) {
+            KLOGI("App stopping page={} transfer_packets={} protocol_errors={}", static_cast<int>(current_page_), transfer_packets_, protocol_errors_);
             StopH264Capture(true);
             ClearTxOverlays();
             view_.Shutdown();
@@ -267,6 +279,9 @@ public:
         });
 
         const int result = app.run();
+        KLOGI("App run finished result={} startup_failed={}", result, startup_failed_.load());
+        kavio::logging::Logger::Flush();
+        kavio::logging::Logger::Shutdown();
         return result == 0 && !startup_failed_.load() ? 0 : 1;
     }
 
@@ -395,6 +410,7 @@ private:
     /** Replace the active page and reset page-specific runtime state. */
     void ShowPage(kavio_demo::Page page)
     {
+        KLOGI("Page navigation: {} -> {}", static_cast<int>(current_page_), static_cast<int>(page));
         current_page_ = page;
         render_paused_ = false;
         rx_live_ = false;  // Never continue reading after the preview is unmounted.
@@ -1011,6 +1027,7 @@ private:
     /** Dispatch a validated App Channel packet. */
     void HandleDemoPacket(const kavio_demo::Packet& packet)
     {
+        KLOGI("App Channel received type={} sequence={} payload_bytes={}", static_cast<int>(packet.type), packet.sequence, packet.payload.size());
         switch (packet.type) {
             /** Send serialized App Channel bytes through the SDK. */
             case kavio_demo::MessageType::Hello:
@@ -1085,6 +1102,7 @@ private:
     bool SendDemoPacket(const std::vector<uint8_t>& bytes)
     {
         if (bytes.empty() || !device_->IsCommChannelReady()) return false;
+        KLOGI("App Channel send packet_bytes={}", bytes.size());        
         const kavio::Status status = device_->SendCommChannelData(bytes);
         if (!status.ok()) {
             std::cerr << "Demo channel send failed: " << status.message << '\n';
@@ -1345,6 +1363,7 @@ private:
             return;
         }
         uint64_t request_id = 0;
+        KLOGI("H.264 subscribe requested request_id={}", request_id);
         const kavio::Status status = device_->SubscribeH264Stream(request_id);
         if (!status.ok()) {
             std::lock_guard<std::mutex> lock(h264_state_mutex_);
@@ -1554,6 +1573,7 @@ private:
     /** Apply and report a JSON configuration update. */
     void CommitSchemaUpdate(const Json::Value& config, const char* success_text)
     {
+        KLOGI("App config update requested");
         const kavio::Status status = device_->UpdateAppConfigJson(EncodeConfigJson(config));
         schema_last_result_ = status.ok() ? success_text : ("Update failed: " + status.message);
         if (status.ok()) ApplyConfig(false);
@@ -1583,16 +1603,16 @@ private:
         return static_cast<KavioDemo*>(lv_event_get_user_data(event));
     }
 
-    static void HomeNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::Home); }
-    static void RenderNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::Render); }
-    static void TransferNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::Transfer); }
-    static void HdmiRxNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::HdmiRx); }
-    static void HdmiTxNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::HdmiTx); }
-    static void KeyboardNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::Keyboard); }
-    static void MouseNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::Mouse); }
-    static void H264Nav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::H264); }
-    static void SchemaNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::Schema); }
-    static void RuntimeNav(lv_event_t* e) { if (auto* s = Self(e)) s->ShowPage(kavio_demo::Page::Runtime); }
+    static void HomeNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=Home"); s->ShowPage(kavio_demo::Page::Home); } }
+    static void RenderNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=Render"); s->ShowPage(kavio_demo::Page::Render); } }
+    static void TransferNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=Transfer"); s->ShowPage(kavio_demo::Page::Transfer); } }
+    static void HdmiRxNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=HdmiRx"); s->ShowPage(kavio_demo::Page::HdmiRx); } }
+    static void HdmiTxNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=HdmiTx"); s->ShowPage(kavio_demo::Page::HdmiTx); } }
+    static void KeyboardNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=Keyboard"); s->ShowPage(kavio_demo::Page::Keyboard); } }
+    static void MouseNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=Mouse"); s->ShowPage(kavio_demo::Page::Mouse); } }
+    static void H264Nav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=H264"); s->ShowPage(kavio_demo::Page::H264); } }
+    static void SchemaNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=Schema"); s->ShowPage(kavio_demo::Page::Schema); } }
+    static void RuntimeNav(lv_event_t* e) { if (auto* s = Self(e)) { KLOGI("UI navigation click page=Runtime"); s->ShowPage(kavio_demo::Page::Runtime); } }
 
     static void ToggleRender(lv_event_t* e)
     {
