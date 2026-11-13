@@ -20,21 +20,6 @@
         "lua"
       ]
     },
-    "sdk": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "modules": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "enum": [
-              "ui"
-            ]
-          }
-        }
-      }
-    },
     "build": {
       "type": "object",
       "additionalProperties": false,

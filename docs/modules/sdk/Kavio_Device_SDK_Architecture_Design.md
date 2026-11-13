@@ -347,11 +347,10 @@ kavio_app/**/kavio_project.json
 `kavio_project.json` 维护开发者真正需要控制的语义：
 
 - `language`：C++ / Python / Lua；
-- `sdk.modules`：当前唯一可选公共模块 `ui`；
 - `package`：最终安装/运行元数据；
 - `build`：只有无法可靠推导的构建输入，例如 KavioDemo 的 PC Host artifact 路径。
 
-Builder、基础 Runtime/语言 Binding、UI 内部依赖由 `language + sdk.modules` 自动推导。
+SDK 始终完整构建；Builder 与基础 Runtime 由 `language` 推导，App UI 运行库由实际使用情况决定。
 
 正式 Schema：
 

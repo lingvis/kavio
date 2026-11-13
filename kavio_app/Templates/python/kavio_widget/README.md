@@ -18,16 +18,6 @@ You program against `kavio.ui`; the LVGL backend is owned by the SDK. Python doe
 ./kavio pack MyApp
 ```
 
-## `sdk.modules`
-
-This template contains:
-
-```json
-"sdk": { "modules": ["ui"] }
-```
-
-The tool automatically deploys `app_runtime`, Python core binding, UI runtime, LVGL backend and Python UI binding. Do not list those internal dependencies manually.
-
 ## What to learn from `main.py`
 
 Use `App`, `ui.State`, layouts and widgets. Widget/device callbacks are dispatched on the App run thread. Do not create a second IPC Client or manipulate LVGL from another thread.

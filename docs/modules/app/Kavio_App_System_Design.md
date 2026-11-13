@@ -268,7 +268,7 @@ Lua     framebuffer / kavio_widget
 4. **模板扫描独立**：`./kavio new --list` 只扫描 Templates 下的模板描述文件。
 5. **一个语言变体对应一个 app_id**：同一逻辑 App 的 C++、Python、Lua 变体可以独立安装。
 6. **构建入口统一**：仓库根目录 `kavio` 是唯一正式入口。
-7. **构建字段最小化**：Builder、基础 Runtime/Binding 由 `language` 和 `sdk.modules` 推导；Package runtime/entry 等安装语义显式保留。
+7. **构建字段最小化**：Builder 与基础 Runtime/Binding 由 `language` 推导，UI 运行库由实际依赖确定；Package runtime/entry 等安装语义显式保留。
 8. **中间产物统一**：SDK、Device Component 和 Staging 进入仓库根目录 `build/`。
 9. **发行边界清楚**：`build/apps/<工程相对路径>/dist/` 保存最终 `.kap`，路径不限层级。
 

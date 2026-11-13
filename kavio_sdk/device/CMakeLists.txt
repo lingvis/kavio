@@ -28,8 +28,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(KAVIO_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
-option(KAVIO_BUILD_PYTHON_BINDING "Build the high-level Kavio Python binding" ON)
-option(KAVIO_BUILD_LUA_BINDING "Build the high-level Kavio Lua 5.4 binding" ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
@@ -72,48 +70,42 @@ kavio_require_files("JsonCpp 1.9.5"
     "${KAVIO_JSONCPP_DIR}/CMakeLists.txt"
     "${KAVIO_JSONCPP_DIR}/include/json/json.h")
 
-if(KAVIO_BUILD_LUA_BINDING)
-    kavio_require_files("Lua 5.4.1"
-        "${KAVIO_LUA_SOURCE_DIR}/lua.h"
-        "${KAVIO_LUA_SOURCE_DIR}/lapi.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lauxlib.c")
-endif()
+kavio_require_files("Lua 5.4.1"
+    "${KAVIO_LUA_SOURCE_DIR}/lua.h"
+    "${KAVIO_LUA_SOURCE_DIR}/lapi.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lauxlib.c")
 
-if(KAVIO_BUILD_LVGL_BACKEND)
-    kavio_require_files("LVGL 9.4.0 / FreeType 2.10.0"
-        "${KAVIO_LVGL_ROOT}/CMakeLists.txt"
-        "${KAVIO_LVGL_ROOT}/lvgl.h"
-        "${KAVIO_FREETYPE_ROOT}/CMakeLists.txt"
-        "${KAVIO_FREETYPE_ROOT}/include/freetype/freetype.h"
-        "${KAVIO_LV_CONF_PATH}")
-endif()
+kavio_require_files("LVGL 9.4.0 / FreeType 2.10.0"
+    "${KAVIO_LVGL_ROOT}/CMakeLists.txt"
+    "${KAVIO_LVGL_ROOT}/lvgl.h"
+    "${KAVIO_FREETYPE_ROOT}/CMakeLists.txt"
+    "${KAVIO_FREETYPE_ROOT}/include/freetype/freetype.h"
+    "${KAVIO_LV_CONF_PATH}")
 
 find_package(Threads REQUIRED)
-if(KAVIO_BUILD_PYTHON_BINDING)
-    # The SDK native extension is built for the VS680 system CPython 3.8 ABI.
-    # Do not silently bind to another Python interpreter / development version.
-    set(Python3_EXECUTABLE "/usr/bin/python3.8" CACHE FILEPATH
-        "Device SDK Python 3.8 interpreter" FORCE)
-    if(NOT EXISTS "${Python3_EXECUTABLE}")
-        message(FATAL_ERROR "Required system Python interpreter not found: ${Python3_EXECUTABLE}")
-    endif()
-    # Use the exact target-system headers and ABI library, not another
-    # Python 3.8 installation found in /usr/local or a virtual environment.
-    set(Python3_INCLUDE_DIR "/usr/include/python3.8" CACHE PATH
-        "VS680 Python 3.8 development headers" FORCE)
-    set(Python3_LIBRARY "/usr/lib/aarch64-linux-gnu/libpython3.8.so" CACHE FILEPATH
-        "VS680 Python 3.8 ABI library" FORCE)
-    kavio_require_files("system Python 3.8 development"
-        "${Python3_INCLUDE_DIR}/Python.h"
-        "${Python3_LIBRARY}")
-    if(CMAKE_VERSION VERSION_LESS "3.18")
-        find_package(Python3 3.8 EXACT COMPONENTS Interpreter Development REQUIRED)
-    else()
-        find_package(Python3 3.8 EXACT COMPONENTS Interpreter Development.Module REQUIRED)
-    endif()
-    if(NOT Python3_VERSION MATCHES "^3\.8(\.|$)")
-        message(FATAL_ERROR "Device SDK requires Python 3.8, found ${Python3_VERSION}")
-    endif()
+# The SDK native extension is built for the VS680 system CPython 3.8 ABI.
+# Do not silently bind to another Python interpreter / development version.
+set(Python3_EXECUTABLE "/usr/bin/python3.8" CACHE FILEPATH
+    "Device SDK Python 3.8 interpreter" FORCE)
+if(NOT EXISTS "${Python3_EXECUTABLE}")
+    message(FATAL_ERROR "Required system Python interpreter not found: ${Python3_EXECUTABLE}")
+endif()
+# Use the exact target-system headers and ABI library, not another
+# Python 3.8 installation found in /usr/local or a virtual environment.
+set(Python3_INCLUDE_DIR "/usr/include/python3.8" CACHE PATH
+    "VS680 Python 3.8 development headers" FORCE)
+set(Python3_LIBRARY "/usr/lib/aarch64-linux-gnu/libpython3.8.so" CACHE FILEPATH
+    "VS680 Python 3.8 ABI library" FORCE)
+kavio_require_files("system Python 3.8 development"
+    "${Python3_INCLUDE_DIR}/Python.h"
+    "${Python3_LIBRARY}")
+if(CMAKE_VERSION VERSION_LESS "3.18")
+    find_package(Python3 3.8 EXACT COMPONENTS Interpreter Development REQUIRED)
+else()
+    find_package(Python3 3.8 EXACT COMPONENTS Interpreter Development.Module REQUIRED)
+endif()
+if(NOT Python3_VERSION MATCHES "^3\.8(\.|$)")
+    message(FATAL_ERROR "Device SDK requires Python 3.8, found ${Python3_VERSION}")
 endif()
 
 function(kavio_collect_cpp_sources out_var)
@@ -376,269 +368,254 @@ if(KAVIO_WARNINGS_AS_ERRORS)
     target_compile_options(kavio_ui_core PRIVATE -Werror)
 endif()
 
-option(KAVIO_BUILD_LVGL_BACKEND
-    "Build Kavio Widget LVGL backend (requires pinned LVGL/FreeType sources)" ON)
+get_filename_component(_KAVIO_LV_CONF_DIR "${KAVIO_LV_CONF_PATH}" DIRECTORY)
+set(LV_CONF_PATH "${KAVIO_LV_CONF_PATH}" CACHE FILEPATH "LVGL lv_conf.h path" FORCE)
+set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "Build LVGL examples" FORCE)
+set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "Build LVGL demos" FORCE)
+set(LV_BUILD_TESTS OFF CACHE BOOL "Build LVGL tests" FORCE)
 
-if(KAVIO_BUILD_LVGL_BACKEND)
-    get_filename_component(_KAVIO_LV_CONF_DIR "${KAVIO_LV_CONF_PATH}" DIRECTORY)
-    set(LV_CONF_PATH "${KAVIO_LV_CONF_PATH}" CACHE FILEPATH "LVGL lv_conf.h path" FORCE)
-    set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "Build LVGL examples" FORCE)
-    set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "Build LVGL demos" FORCE)
-    set(LV_BUILD_TESTS OFF CACHE BOOL "Build LVGL tests" FORCE)
+# The SDK only needs FreeType outline-font rendering. Keep optional external
+# image/compression/shaping dependencies out of the SDK link interface.
+set(FT_WITH_ZLIB OFF CACHE BOOL "Require system zlib for FreeType" FORCE)
+set(FT_WITH_BZIP2 OFF CACHE BOOL "Require bzip2 for FreeType" FORCE)
+set(FT_WITH_PNG OFF CACHE BOOL "Require PNG for FreeType" FORCE)
+set(FT_WITH_HARFBUZZ OFF CACHE BOOL "Require HarfBuzz for FreeType" FORCE)
+set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_PNG TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_BZip2 TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_HarfBuzz TRUE)
+add_subdirectory("${KAVIO_FREETYPE_ROOT}" freetype_kavio_ui_build EXCLUDE_FROM_ALL)
+unset(CMAKE_DISABLE_FIND_PACKAGE_ZLIB)
+unset(CMAKE_DISABLE_FIND_PACKAGE_PNG)
+unset(CMAKE_DISABLE_FIND_PACKAGE_BZip2)
+unset(CMAKE_DISABLE_FIND_PACKAGE_HarfBuzz)
+if(NOT TARGET freetype)
+    message(FATAL_ERROR "Bundled FreeType 2.10.0 must provide the freetype target")
+endif()
+set_target_properties(freetype PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set(_KAVIO_FREETYPE_TARGET freetype)
 
-    # The SDK only needs FreeType outline-font rendering. Keep optional external
-    # image/compression/shaping dependencies out of the SDK link interface.
-    set(FT_WITH_ZLIB OFF CACHE BOOL "Require system zlib for FreeType" FORCE)
-    set(FT_WITH_BZIP2 OFF CACHE BOOL "Require bzip2 for FreeType" FORCE)
-    set(FT_WITH_PNG OFF CACHE BOOL "Require PNG for FreeType" FORCE)
-    set(FT_WITH_HARFBUZZ OFF CACHE BOOL "Require HarfBuzz for FreeType" FORCE)
-    set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)
-    set(CMAKE_DISABLE_FIND_PACKAGE_PNG TRUE)
-    set(CMAKE_DISABLE_FIND_PACKAGE_BZip2 TRUE)
-    set(CMAKE_DISABLE_FIND_PACKAGE_HarfBuzz TRUE)
-    add_subdirectory("${KAVIO_FREETYPE_ROOT}" freetype_kavio_ui_build EXCLUDE_FROM_ALL)
-    unset(CMAKE_DISABLE_FIND_PACKAGE_ZLIB)
-    unset(CMAKE_DISABLE_FIND_PACKAGE_PNG)
-    unset(CMAKE_DISABLE_FIND_PACKAGE_BZip2)
-    unset(CMAKE_DISABLE_FIND_PACKAGE_HarfBuzz)
-    if(NOT TARGET freetype)
-        message(FATAL_ERROR "Bundled FreeType 2.10.0 must provide the freetype target")
-    endif()
-    set_target_properties(freetype PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    set(_KAVIO_FREETYPE_TARGET freetype)
+add_subdirectory("${KAVIO_LVGL_ROOT}" lvgl_kavio_ui_build EXCLUDE_FROM_ALL)
+if(NOT TARGET lvgl)
+    message(FATAL_ERROR "Bundled LVGL 9.4.0 must provide the lvgl target")
+endif()
+set(_KAVIO_LVGL_TARGET lvgl)
 
-    add_subdirectory("${KAVIO_LVGL_ROOT}" lvgl_kavio_ui_build EXCLUDE_FROM_ALL)
-    if(NOT TARGET lvgl)
-        message(FATAL_ERROR "Bundled LVGL 9.4.0 must provide the lvgl target")
-    endif()
-    set(_KAVIO_LVGL_TARGET lvgl)
+set_target_properties(lvgl PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(TARGET lvgl_thorvg)
+    set_target_properties(lvgl_thorvg PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
-    set_target_properties(lvgl PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    if(TARGET lvgl_thorvg)
-        set_target_properties(lvgl_thorvg PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    endif()
+target_include_directories(lvgl PUBLIC
+    "${_KAVIO_LV_CONF_DIR}"
+    "${KAVIO_LVGL_ROOT}/src/libs/freetype")
+target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
+target_link_libraries(lvgl PUBLIC ${_KAVIO_FREETYPE_TARGET})
 
-    target_include_directories(lvgl PUBLIC
+add_library(kavio_ui_lvgl SHARED
+    "${KAVIO_SDK_SRC_DIR}/ui/LvglBackend.cpp"
+    "${KAVIO_SDK_SRC_DIR}/ui/LvglC.cpp")
+target_include_directories(kavio_ui_lvgl
+    PUBLIC
+        "${KAVIO_SDK_INC_DIR}"
+        "${KAVIO_LVGL_ROOT}/src"
+        "${KAVIO_LVGL_ROOT}/src/libs/freetype"
+        "${KAVIO_FREETYPE_ROOT}/include"
         "${_KAVIO_LV_CONF_DIR}"
-        "${KAVIO_LVGL_ROOT}/src/libs/freetype")
-    target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
-    target_link_libraries(lvgl PUBLIC ${_KAVIO_FREETYPE_TARGET})
-
-    add_library(kavio_ui_lvgl SHARED
-        "${KAVIO_SDK_SRC_DIR}/ui/LvglBackend.cpp"
-        "${KAVIO_SDK_SRC_DIR}/ui/LvglC.cpp")
-    target_include_directories(kavio_ui_lvgl
-        PUBLIC
-            "${KAVIO_SDK_INC_DIR}"
-            "${KAVIO_LVGL_ROOT}/src"
-            "${KAVIO_LVGL_ROOT}/src/libs/freetype"
-            "${KAVIO_FREETYPE_ROOT}/include"
-            "${_KAVIO_LV_CONF_DIR}"
-        PRIVATE
-            "${KAVIO_SDK_SRC_DIR}")
-    target_compile_definitions(kavio_ui_lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE PRIVATE KAVIO_UI_LVGL_BUILD)
-    target_link_libraries(kavio_ui_lvgl PRIVATE kavio_ui_core kavio_app_runtime)
-    # Kavio::UI::LVGL exposes a native C++ LVGL extension point. Embed the
-    # complete static LVGL archive in the backend so consumers use the same
-    # LVGL engine/state as the backend instead of linking a second copy.
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_link_libraries(kavio_ui_lvgl PRIVATE
-            "-Wl,--whole-archive" ${_KAVIO_LVGL_TARGET} "-Wl,--no-whole-archive"
-            ${_KAVIO_FREETYPE_TARGET})
-    else()
-        target_link_libraries(kavio_ui_lvgl PRIVATE ${_KAVIO_LVGL_TARGET} ${_KAVIO_FREETYPE_TARGET})
-    endif()
-    target_compile_options(kavio_ui_lvgl PRIVATE -Wall -Wextra -Wno-deprecated-declarations -frtti)
-    set_target_properties(kavio_ui_lvgl PROPERTIES
-        C_VISIBILITY_PRESET default
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN YES
-        BUILD_RPATH "$ORIGIN"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
-    if(KAVIO_WARNINGS_AS_ERRORS)
-        target_compile_options(kavio_ui_lvgl PRIVATE -Werror)
-    endif()
+    PRIVATE
+        "${KAVIO_SDK_SRC_DIR}")
+target_compile_definitions(kavio_ui_lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE PRIVATE KAVIO_UI_LVGL_BUILD)
+target_link_libraries(kavio_ui_lvgl PRIVATE kavio_ui_core kavio_app_runtime)
+# Kavio::UI::LVGL exposes a native C++ LVGL extension point. Embed the
+# complete static LVGL archive in the backend so consumers use the same
+# LVGL engine/state as the backend instead of linking a second copy.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_libraries(kavio_ui_lvgl PRIVATE
+        "-Wl,--whole-archive" ${_KAVIO_LVGL_TARGET} "-Wl,--no-whole-archive"
+        ${_KAVIO_FREETYPE_TARGET})
+else()
+    target_link_libraries(kavio_ui_lvgl PRIVATE ${_KAVIO_LVGL_TARGET} ${_KAVIO_FREETYPE_TARGET})
+endif()
+target_compile_options(kavio_ui_lvgl PRIVATE -Wall -Wextra -Wno-deprecated-declarations -frtti)
+set_target_properties(kavio_ui_lvgl PROPERTIES
+    C_VISIBILITY_PRESET default
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+    BUILD_RPATH "$ORIGIN"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+if(KAVIO_WARNINGS_AS_ERRORS)
+    target_compile_options(kavio_ui_lvgl PRIVATE -Werror)
 endif()
 
 # High-level Python binding. The core extension only depends on the language-neutral
-# App Runtime C ABI. The LVGL extension is staged separately so framebuffer-only
+# App Runtime C ABI. The LVGL extension is packaged separately so framebuffer-only
 # Python Apps do not carry or load the Widget backend.
-if(KAVIO_BUILD_PYTHON_BINDING)
-    set(KAVIO_PYTHON_BINDING_SOURCE_DIR
-        "${KAVIO_SDK_DEVICE_DIR}/bindings/python/package/kavio")
-    set(KAVIO_PYTHON_CORE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/python/core/kavio")
-    set(KAVIO_PYTHON_UI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/python/ui/kavio")
+set(KAVIO_PYTHON_BINDING_SOURCE_DIR
+    "${KAVIO_SDK_DEVICE_DIR}/bindings/python/package/kavio")
+set(KAVIO_PYTHON_CORE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/python/core/kavio")
+set(KAVIO_PYTHON_UI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/python/ui/kavio")
 
-    add_library(kavio_python_native MODULE
-        "${KAVIO_SDK_DEVICE_DIR}/bindings/python/native/kavio_native.cpp")
-    target_include_directories(kavio_python_native PRIVATE "${KAVIO_SDK_INC_DIR}")
-    target_link_libraries(kavio_python_native PRIVATE Python3::Module kavio_app_runtime)
-    target_compile_options(kavio_python_native PRIVATE
-        -Wall -Wextra -Wno-deprecated-declarations
-        -Wno-missing-field-initializers -Wno-cast-function-type)
-    if(KAVIO_WARNINGS_AS_ERRORS)
-        target_compile_options(kavio_python_native PRIVATE -Werror)
-    endif()
-    set_target_properties(kavio_python_native PROPERTIES
-        PREFIX ""
-        OUTPUT_NAME "_native"
-        LIBRARY_OUTPUT_DIRECTORY "${KAVIO_PYTHON_CORE_OUTPUT_DIR}"
-        BUILD_RPATH "$ORIGIN/../../../lib;$ORIGIN/../lib")
-
-    add_custom_target(kavio_python_package
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${KAVIO_PYTHON_CORE_OUTPUT_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${KAVIO_PYTHON_BINDING_SOURCE_DIR}"
-            "${KAVIO_PYTHON_CORE_OUTPUT_DIR}"
-        DEPENDS kavio_python_native
-        COMMENT "Staging high-level Kavio Python core package"
-        VERBATIM)
-
-    if(TARGET kavio_ui_lvgl)
-        add_library(kavio_python_ui_native MODULE
-            "${KAVIO_SDK_DEVICE_DIR}/bindings/python/native/kavio_ui_native.cpp")
-        target_include_directories(kavio_python_ui_native PRIVATE "${KAVIO_SDK_INC_DIR}")
-        target_link_libraries(kavio_python_ui_native PRIVATE
-            Python3::Module kavio_ui_core kavio_ui_lvgl)
-        target_compile_options(kavio_python_ui_native PRIVATE
-            -Wall -Wextra -Wno-deprecated-declarations
-            -Wno-missing-field-initializers -Wno-cast-function-type)
-        if(KAVIO_WARNINGS_AS_ERRORS)
-            target_compile_options(kavio_python_ui_native PRIVATE -Werror)
-        endif()
-        set_target_properties(kavio_python_ui_native PROPERTIES
-            PREFIX ""
-            OUTPUT_NAME "_ui_native"
-            LIBRARY_OUTPUT_DIRECTORY "${KAVIO_PYTHON_UI_OUTPUT_DIR}"
-            BUILD_RPATH "$ORIGIN/../../../lib;$ORIGIN/../lib")
-        add_custom_target(kavio_python_ui_package DEPENDS kavio_python_ui_native)
-    endif()
+add_library(kavio_python_native MODULE
+    "${KAVIO_SDK_DEVICE_DIR}/bindings/python/native/kavio_native.cpp")
+target_include_directories(kavio_python_native PRIVATE "${KAVIO_SDK_INC_DIR}")
+target_link_libraries(kavio_python_native PRIVATE Python3::Module kavio_app_runtime)
+target_compile_options(kavio_python_native PRIVATE
+    -Wall -Wextra -Wno-deprecated-declarations
+    -Wno-missing-field-initializers -Wno-cast-function-type)
+if(KAVIO_WARNINGS_AS_ERRORS)
+    target_compile_options(kavio_python_native PRIVATE -Werror)
 endif()
+set_target_properties(kavio_python_native PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "_native"
+    LIBRARY_OUTPUT_DIRECTORY "${KAVIO_PYTHON_CORE_OUTPUT_DIR}"
+    BUILD_RPATH "$ORIGIN/../../../lib;$ORIGIN/../lib")
+
+add_custom_target(kavio_python_package
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${KAVIO_PYTHON_CORE_OUTPUT_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${KAVIO_PYTHON_BINDING_SOURCE_DIR}"
+        "${KAVIO_PYTHON_CORE_OUTPUT_DIR}"
+    DEPENDS kavio_python_native
+    COMMENT "Staging high-level Kavio Python core package"
+    VERBATIM)
+
+add_library(kavio_python_ui_native MODULE
+    "${KAVIO_SDK_DEVICE_DIR}/bindings/python/native/kavio_ui_native.cpp")
+target_include_directories(kavio_python_ui_native PRIVATE "${KAVIO_SDK_INC_DIR}")
+target_link_libraries(kavio_python_ui_native PRIVATE
+    Python3::Module kavio_ui_core kavio_ui_lvgl)
+target_compile_options(kavio_python_ui_native PRIVATE
+    -Wall -Wextra -Wno-deprecated-declarations
+    -Wno-missing-field-initializers -Wno-cast-function-type)
+if(KAVIO_WARNINGS_AS_ERRORS)
+    target_compile_options(kavio_python_ui_native PRIVATE -Werror)
+endif()
+set_target_properties(kavio_python_ui_native PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "_ui_native"
+    LIBRARY_OUTPUT_DIRECTORY "${KAVIO_PYTHON_UI_OUTPUT_DIR}"
+    BUILD_RPATH "$ORIGIN/../../../lib;$ORIGIN/../lib")
+add_custom_target(kavio_python_ui_package DEPENDS kavio_python_ui_native)
 
 # Lua 5.4 runtime and high-level binding. Lua Apps are packaged with the
 # SDK-owned native runner, so the device App host continues to launch a native
 # entry while the App implementation itself is written in Lua.
-set(_KAVIO_LUA_AVAILABLE FALSE)
-if(KAVIO_BUILD_LUA_BINDING)
-    set(_KAVIO_LUA_AVAILABLE TRUE)
-    set(KAVIO_LUA_C_SOURCES
-        "${KAVIO_LUA_SOURCE_DIR}/lapi.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lauxlib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lbaselib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lcode.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lcorolib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lctype.c"
-        "${KAVIO_LUA_SOURCE_DIR}/ldblib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/ldebug.c"
-        "${KAVIO_LUA_SOURCE_DIR}/ldo.c"
-        "${KAVIO_LUA_SOURCE_DIR}/ldump.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lfunc.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lgc.c"
-        "${KAVIO_LUA_SOURCE_DIR}/linit.c"
-        "${KAVIO_LUA_SOURCE_DIR}/liolib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/llex.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lmathlib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lmem.c"
-        "${KAVIO_LUA_SOURCE_DIR}/loadlib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lobject.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lopcodes.c"
-        "${KAVIO_LUA_SOURCE_DIR}/loslib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lparser.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lstate.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lstring.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lstrlib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/ltable.c"
-        "${KAVIO_LUA_SOURCE_DIR}/ltablib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/ltm.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lundump.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lutf8lib.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lvm.c"
-        "${KAVIO_LUA_SOURCE_DIR}/lzio.c"
-    )
-    kavio_require_files("Lua 5.4.1 library sources" ${KAVIO_LUA_C_SOURCES})
+set(KAVIO_LUA_C_SOURCES
+    "${KAVIO_LUA_SOURCE_DIR}/lapi.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lauxlib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lbaselib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lcode.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lcorolib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lctype.c"
+    "${KAVIO_LUA_SOURCE_DIR}/ldblib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/ldebug.c"
+    "${KAVIO_LUA_SOURCE_DIR}/ldo.c"
+    "${KAVIO_LUA_SOURCE_DIR}/ldump.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lfunc.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lgc.c"
+    "${KAVIO_LUA_SOURCE_DIR}/linit.c"
+    "${KAVIO_LUA_SOURCE_DIR}/liolib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/llex.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lmathlib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lmem.c"
+    "${KAVIO_LUA_SOURCE_DIR}/loadlib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lobject.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lopcodes.c"
+    "${KAVIO_LUA_SOURCE_DIR}/loslib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lparser.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lstate.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lstring.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lstrlib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/ltable.c"
+    "${KAVIO_LUA_SOURCE_DIR}/ltablib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/ltm.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lundump.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lutf8lib.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lvm.c"
+    "${KAVIO_LUA_SOURCE_DIR}/lzio.c"
+)
+kavio_require_files("Lua 5.4.1 library sources" ${KAVIO_LUA_C_SOURCES})
 
-    add_library(kavio_lua_runtime SHARED ${KAVIO_LUA_C_SOURCES})
-    target_include_directories(kavio_lua_runtime PUBLIC "${KAVIO_LUA_SOURCE_DIR}")
-    target_compile_definitions(kavio_lua_runtime PRIVATE LUA_USE_LINUX)
-    target_link_libraries(kavio_lua_runtime PRIVATE dl m)
-    set_target_properties(kavio_lua_runtime PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME kavio_lua
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+add_library(kavio_lua_runtime SHARED ${KAVIO_LUA_C_SOURCES})
+target_include_directories(kavio_lua_runtime PUBLIC "${KAVIO_LUA_SOURCE_DIR}")
+target_compile_definitions(kavio_lua_runtime PRIVATE LUA_USE_LINUX)
+target_link_libraries(kavio_lua_runtime PRIVATE dl m)
+set_target_properties(kavio_lua_runtime PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    OUTPUT_NAME kavio_lua
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-    set(KAVIO_LUA_NATIVE_DIR "${KAVIO_SDK_DEVICE_DIR}/bindings/lua/native")
-    set(KAVIO_LUA_PACKAGE_SOURCE_DIR "${KAVIO_SDK_DEVICE_DIR}/bindings/lua/package/kavio")
-    set(KAVIO_LUA_RUNTIME_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lua/runtime/device")
-    set(KAVIO_LUA_CORE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lua/core/kavio")
-    set(KAVIO_LUA_UI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lua/ui/kavio")
+set(KAVIO_LUA_NATIVE_DIR "${KAVIO_SDK_DEVICE_DIR}/bindings/lua/native")
+set(KAVIO_LUA_PACKAGE_SOURCE_DIR "${KAVIO_SDK_DEVICE_DIR}/bindings/lua/package/kavio")
+set(KAVIO_LUA_RUNTIME_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lua/runtime/device")
+set(KAVIO_LUA_CORE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lua/core/kavio")
+set(KAVIO_LUA_UI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lua/ui/kavio")
 
-    add_executable(kavio_lua_runner "${KAVIO_LUA_NATIVE_DIR}/kavio_lua_runner.cpp")
-    target_include_directories(kavio_lua_runner PRIVATE "${KAVIO_LUA_SOURCE_DIR}")
-    # On glibc 2.31, libstdc++'s std::thread checks weak pthread symbols.
-    # The runner loads its SDK runtime through a Lua module; without a direct
-    # DT_NEEDED entry for libpthread, thread creation reports EPERM.
-    target_link_libraries(kavio_lua_runner PRIVATE kavio_lua_runtime Threads::Threads)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_libraries(kavio_lua_runner PRIVATE "-Wl,--no-as-needed" pthread "-Wl,--as-needed")
-    endif()
-    target_compile_options(kavio_lua_runner PRIVATE -Wall -Wextra)
-    if(KAVIO_WARNINGS_AS_ERRORS)
-        target_compile_options(kavio_lua_runner PRIVATE -Werror)
-    endif()
-    set_target_properties(kavio_lua_runner PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${KAVIO_LUA_RUNTIME_OUTPUT_DIR}"
-        BUILD_RPATH "$ORIGIN/lib")
-
-    add_library(kavio_lua_native MODULE "${KAVIO_LUA_NATIVE_DIR}/kavio_lua_native.cpp")
-    target_include_directories(kavio_lua_native PRIVATE
-        "${KAVIO_LUA_SOURCE_DIR}" "${KAVIO_SDK_INC_DIR}" "${KAVIO_LUA_NATIVE_DIR}")
-    target_link_libraries(kavio_lua_native PRIVATE kavio_lua_runtime kavio_app_runtime Threads::Threads)
-    target_compile_options(kavio_lua_native PRIVATE -Wall -Wextra -Wno-deprecated-declarations)
-    if(KAVIO_WARNINGS_AS_ERRORS)
-        target_compile_options(kavio_lua_native PRIVATE -Werror)
-    endif()
-    set_target_properties(kavio_lua_native PROPERTIES
-        PREFIX ""
-        OUTPUT_NAME "native"
-        LIBRARY_OUTPUT_DIRECTORY "${KAVIO_LUA_CORE_OUTPUT_DIR}"
-        BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../../../lib")
-
-    add_custom_target(kavio_lua_runtime_package
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${KAVIO_LUA_RUNTIME_OUTPUT_DIR}/lib"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:kavio_lua_runtime>"
-            "${KAVIO_LUA_RUNTIME_OUTPUT_DIR}/lib/$<TARGET_FILE_NAME:kavio_lua_runtime>"
-        DEPENDS kavio_lua_runner kavio_lua_runtime
-        COMMENT "Staging Kavio Lua runtime"
-        VERBATIM)
-
-    add_custom_target(kavio_lua_package
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${KAVIO_LUA_CORE_OUTPUT_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${KAVIO_LUA_PACKAGE_SOURCE_DIR}"
-            "${KAVIO_LUA_CORE_OUTPUT_DIR}"
-        DEPENDS kavio_lua_native
-        COMMENT "Staging high-level Kavio Lua core package"
-        VERBATIM)
-
-    if(TARGET kavio_ui_lvgl)
-        add_library(kavio_lua_ui_native MODULE "${KAVIO_LUA_NATIVE_DIR}/kavio_lua_ui_native.cpp")
-        target_include_directories(kavio_lua_ui_native PRIVATE
-            "${KAVIO_LUA_SOURCE_DIR}" "${KAVIO_SDK_INC_DIR}" "${KAVIO_LUA_NATIVE_DIR}")
-        target_link_libraries(kavio_lua_ui_native PRIVATE
-            kavio_lua_runtime kavio_ui_core kavio_ui_lvgl)
-        target_compile_options(kavio_lua_ui_native PRIVATE -Wall -Wextra -Wno-deprecated-declarations)
-        if(KAVIO_WARNINGS_AS_ERRORS)
-            target_compile_options(kavio_lua_ui_native PRIVATE -Werror)
-        endif()
-        set_target_properties(kavio_lua_ui_native PROPERTIES
-            PREFIX ""
-            OUTPUT_NAME "ui_native"
-            LIBRARY_OUTPUT_DIRECTORY "${KAVIO_LUA_UI_OUTPUT_DIR}"
-            BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../../../lib")
-        add_custom_target(kavio_lua_ui_package DEPENDS kavio_lua_ui_native)
-    endif()
+add_executable(kavio_lua_runner "${KAVIO_LUA_NATIVE_DIR}/kavio_lua_runner.cpp")
+target_include_directories(kavio_lua_runner PRIVATE "${KAVIO_LUA_SOURCE_DIR}")
+# On glibc 2.31, libstdc++'s std::thread checks weak pthread symbols.
+# The runner loads its SDK runtime through a Lua module; without a direct
+# DT_NEEDED entry for libpthread, thread creation reports EPERM.
+target_link_libraries(kavio_lua_runner PRIVATE kavio_lua_runtime Threads::Threads)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(kavio_lua_runner PRIVATE "-Wl,--no-as-needed" pthread "-Wl,--as-needed")
 endif()
+target_compile_options(kavio_lua_runner PRIVATE -Wall -Wextra)
+if(KAVIO_WARNINGS_AS_ERRORS)
+    target_compile_options(kavio_lua_runner PRIVATE -Werror)
+endif()
+set_target_properties(kavio_lua_runner PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${KAVIO_LUA_RUNTIME_OUTPUT_DIR}"
+    BUILD_RPATH "$ORIGIN/lib")
+
+add_library(kavio_lua_native MODULE "${KAVIO_LUA_NATIVE_DIR}/kavio_lua_native.cpp")
+target_include_directories(kavio_lua_native PRIVATE
+    "${KAVIO_LUA_SOURCE_DIR}" "${KAVIO_SDK_INC_DIR}" "${KAVIO_LUA_NATIVE_DIR}")
+target_link_libraries(kavio_lua_native PRIVATE kavio_lua_runtime kavio_app_runtime Threads::Threads)
+target_compile_options(kavio_lua_native PRIVATE -Wall -Wextra -Wno-deprecated-declarations)
+if(KAVIO_WARNINGS_AS_ERRORS)
+    target_compile_options(kavio_lua_native PRIVATE -Werror)
+endif()
+set_target_properties(kavio_lua_native PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "native"
+    LIBRARY_OUTPUT_DIRECTORY "${KAVIO_LUA_CORE_OUTPUT_DIR}"
+    BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../../../lib")
+
+add_custom_target(kavio_lua_runtime_package
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${KAVIO_LUA_RUNTIME_OUTPUT_DIR}/lib"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:kavio_lua_runtime>"
+        "${KAVIO_LUA_RUNTIME_OUTPUT_DIR}/lib/$<TARGET_FILE_NAME:kavio_lua_runtime>"
+    DEPENDS kavio_lua_runner kavio_lua_runtime
+    COMMENT "Staging Kavio Lua runtime"
+    VERBATIM)
+
+add_custom_target(kavio_lua_package
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${KAVIO_LUA_CORE_OUTPUT_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${KAVIO_LUA_PACKAGE_SOURCE_DIR}"
+        "${KAVIO_LUA_CORE_OUTPUT_DIR}"
+    DEPENDS kavio_lua_native
+    COMMENT "Staging high-level Kavio Lua core package"
+    VERBATIM)
+
+add_library(kavio_lua_ui_native MODULE "${KAVIO_LUA_NATIVE_DIR}/kavio_lua_ui_native.cpp")
+target_include_directories(kavio_lua_ui_native PRIVATE
+    "${KAVIO_LUA_SOURCE_DIR}" "${KAVIO_SDK_INC_DIR}" "${KAVIO_LUA_NATIVE_DIR}")
+target_link_libraries(kavio_lua_ui_native PRIVATE
+    kavio_lua_runtime kavio_ui_core kavio_ui_lvgl)
+target_compile_options(kavio_lua_ui_native PRIVATE -Wall -Wextra -Wno-deprecated-declarations)
+if(KAVIO_WARNINGS_AS_ERRORS)
+    target_compile_options(kavio_lua_ui_native PRIVATE -Werror)
+endif()
+set_target_properties(kavio_lua_ui_native PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "ui_native"
+    LIBRARY_OUTPUT_DIRECTORY "${KAVIO_LUA_UI_OUTPUT_DIR}"
+    BUILD_RPATH "$ORIGIN/../lib;$ORIGIN/../../../lib")
+add_custom_target(kavio_lua_ui_package DEPENDS kavio_lua_ui_native)
 
 # Generate the build-tree CMake package consumed by Native Apps.
 #
@@ -653,31 +630,6 @@ set(KAVIO_DEVICE_SDK_CONFIG_FILE "${CMAKE_BINARY_DIR}/KavioDeviceSdkConfig.cmake
 set(KAVIO_DEVICE_SDK_CONFIG_GENERATOR
     "${KAVIO_SDK_DEVICE_DIR}/tools/GenerateCppSdkConfig.cmake")
 
-set(_KAVIO_SDK_PACKAGE_OPTIONAL_ARGS)
-set(_KAVIO_SDK_PACKAGE_OPTIONAL_DEPS)
-if(TARGET kavio_python_package)
-    list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_DEPS kavio_python_package)
-endif()
-if(TARGET kavio_python_ui_package)
-    list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_DEPS kavio_python_ui_package)
-endif()
-if(TARGET kavio_lua_runtime_package)
-    list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_DEPS kavio_lua_runtime_package)
-endif()
-if(TARGET kavio_lua_package)
-    list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_DEPS kavio_lua_package)
-endif()
-if(TARGET kavio_lua_ui_package)
-    list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_DEPS kavio_lua_ui_package)
-endif()
-if(TARGET kavio_ui_lvgl)
-    list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_ARGS
-        "-DKAVIO_LVGL_INCLUDE_DIR=${KAVIO_LVGL_ROOT}/src"
-        "-DKAVIO_LV_CONF_DIR=${_KAVIO_LV_CONF_DIR}"
-        "-DKAVIO_FREETYPE_INCLUDE_DIR=${KAVIO_FREETYPE_ROOT}/include"
-        "-DKAVIO_UI_LVGL_LIBRARY=$<TARGET_FILE:kavio_ui_lvgl>")
-    list(APPEND _KAVIO_SDK_PACKAGE_OPTIONAL_DEPS kavio_ui_lvgl)
-endif()
 
 add_custom_target(kavio_device_sdk_package
     COMMAND ${CMAKE_COMMAND}
@@ -695,13 +647,21 @@ add_custom_target(kavio_device_sdk_package
         "-DKAVIO_LOGGING_DIR=${KAVIO_LOGGING_DIR}"
         "-DKAVIO_PROTO_INCLUDE_DIR=${KAVIO_SDK_PROTO_GEN_DIR}"
         "-DKAVIO_PROTOBUF_SOURCE_INCLUDE_DIR=${KAVIO_PROTOBUF_DIR}/src"
-        ${_KAVIO_SDK_PACKAGE_OPTIONAL_ARGS}
+        "-DKAVIO_LVGL_INCLUDE_DIR=${KAVIO_LVGL_ROOT}/src"
+        "-DKAVIO_LV_CONF_DIR=${_KAVIO_LV_CONF_DIR}"
+        "-DKAVIO_FREETYPE_INCLUDE_DIR=${KAVIO_FREETYPE_ROOT}/include"
+        "-DKAVIO_UI_LVGL_LIBRARY=$<TARGET_FILE:kavio_ui_lvgl>"
         -P "${KAVIO_DEVICE_SDK_CONFIG_GENERATOR}"
     DEPENDS
         kavio_sdk
         kavio_app_runtime
         kavio_ui_core
-        ${_KAVIO_SDK_PACKAGE_OPTIONAL_DEPS}
+        kavio_ui_lvgl
+        kavio_python_package
+        kavio_python_ui_package
+        kavio_lua_runtime_package
+        kavio_lua_package
+        kavio_lua_ui_package
         "${KAVIO_DEVICE_SDK_CONFIG_GENERATOR}"
     COMMENT "Generating KavioDeviceSdkConfig.cmake for Native Apps"
     VERBATIM

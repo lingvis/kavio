@@ -139,9 +139,6 @@ MyApp/
 {
   "projectVersion": 1,
   "language": "cpp",
-  "sdk": {
-    "modules": ["ui"]
-  },
   "package": {
     "appId": "com.example.my-app",
     "version": "1.0.0",
@@ -291,15 +288,7 @@ lua_binding
 | Python | App Runtime + Python Core Binding |
 | Lua | App Runtime + Lua Runtime + Lua Core Binding |
 
-如果工程声明：
-
-```json
-"sdk": {
-  "modules": ["ui"]
-}
-```
-
-再自动增加：
+如应用实际引用 UI（C++ 链接库依赖，Python/Lua 使用 UI Binding），打包时自动增加：
 
 ```text
 UI Core
@@ -425,42 +414,19 @@ signature.json       # signing enabled 时
 
 - CMake Target；
 - Device 源码目录；
-- `sdk.modules`；
 - 构建机器路径；
 - `kavio_project.json`；
 - 构建命令。
 
 ---
 
-## 8. SDK 模块
+## 8. SDK 构建和运行依赖
 
-当前公开可选模块：
+Device SDK 始终构建全部公开库，包括 C++、Python、Lua 和 LVGL/UI。App 工程不再声明 `sdk` 或 `sdk.modules`。
 
-```json
-"sdk": {
-  "modules": ["ui"]
-}
-```
+App 只需选择所使用的 API：C++ 在自身 CMake 中链接 `Kavio::UI::LVGL`，Python 使用 `kavio.ui`，Lua 使用 `require("kavio.ui")`。打包工具根据构建产物的 ELF 依赖或脚本导入自动收集相应 UI 运行库。FrameBuffer App 不需要额外声明。
 
-### 不声明 `ui`
-
-用于：
-
-- Direct FrameBuffer；
-- 自有 Renderer；
-- 不需要 Kavio Widget/LVGL 的 App。
-
-### 声明 `ui`
-
-用于：
-
-- Kavio Widget；
-- SDK LVGL Backend；
-- C++ Native LVGL extension。
-
-这里声明的是**公开 SDK 能力**，不是内部 Shared Library 列表。
-
----
+对于运行时拼接的动态导入，静态扫描无法识别；需要改成可静态识别的导入，或另行提供运行依赖扩展机制。
 
 ## 9. Host Component
 
@@ -572,7 +538,7 @@ App -> Kavio Widget -> SDK LVGL backend -> Presentation
 App -> Presentation -> FrameLease -> BGRA buffer -> Renderer -> Present
 ```
 
-不声明 `sdk.modules.ui`。
+不需要声明 SDK 模块。
 
 ### `advanced_ui` — 仅 C++
 
@@ -632,7 +598,7 @@ build/sdk/release/
 ./kavio build MyApp --release
 ```
 
-`build` 自动准备 SDK，读取 `language`/`sdk.modules`，推导 Builder/Runtime/Binding 依赖，只构建或暂存 Device Component；不构建 Windows Host DLL，不生成 `.kap`。
+`build` 自动准备 SDK，读取 `language`，推导 Builder/Runtime/Binding 依赖，只构建或暂存 Device Component；不构建 Windows Host DLL，不生成 `.kap`。
 
 Templates 本身没有 `kavio_project.json`，所以不能直接构建。
 
@@ -694,9 +660,6 @@ Templates 本身没有 `kavio_project.json`，所以不能直接构建。
 {
   "projectVersion": 1,
   "language": "python",
-  "sdk": {
-    "modules": ["ui"]
-  },
   "package": {
     "appId": "com.example.python-app",
     "version": "1.0.0",

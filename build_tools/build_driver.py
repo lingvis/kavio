@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import hashlib
 import json
@@ -30,7 +31,6 @@ PROJECT_CONFIG_NAME = "kavio_project.json"
 TEMPLATE_CONFIG_NAME = "kavio_project.json.template"
 TEMPLATE_ROOT = APP_ROOT / "Templates"
 SUPPORTED_LANGUAGES = {"cpp", "python", "lua"}
-SUPPORTED_SDK_MODULES = {"ui"}
 
 DEVELOPER_SOCKET = "/run/kavio/developer.sock"
 DEVELOPER_PROTOCOL_MAGIC = b"KDEV"
@@ -52,8 +52,7 @@ class BuildError(RuntimeError):
     pass
 
 
-ROOT_FIELDS = {"projectVersion", "language", "sdk", "build", "package"}
-SDK_FIELDS = {"modules"}
+ROOT_FIELDS = {"projectVersion", "language", "build", "package"}
 BUILD_FIELDS = {"source", "target"}
 PACKAGE_FIELDS = {"appId", "version", "name", "description", "device", "host"}
 DEVICE_FIELDS = {"runtime", "entry", "arguments", "python"}
@@ -132,22 +131,67 @@ def infer_builder(language: str) -> str:
     return {"cpp": "cmake", "python": "python", "lua": "lua"}[language]
 
 
-def infer_dependencies(language: str, modules: list[str]) -> list[str]:
+def infer_dependencies(language: str) -> list[str]:
+    # Language runtime is mandatory; UI is determined from the built App.
     if language == "cpp":
-        dependencies = ["app_runtime"]
-    elif language == "python":
-        dependencies = ["app_runtime", "python_binding"]
-    elif language == "lua":
-        dependencies = ["app_runtime", "lua_runtime", "lua_binding"]
-    else:
-        raise BuildError(f"unsupported language: {language}")
+        return ["app_runtime"]
+    if language == "python":
+        return ["app_runtime", "python_binding"]
+    if language == "lua":
+        return ["app_runtime", "lua_runtime", "lua_binding"]
+    raise BuildError(f"unsupported language: {language}")
 
-    if "ui" in modules:
-        dependencies.extend(["ui_core", "ui_lvgl"])
-        if language == "python":
-            dependencies.append("python_ui_binding")
-        elif language == "lua":
-            dependencies.append("lua_ui_binding")
+
+def python_uses_ui(source: Path) -> bool:
+    # Inspect all bundled Python source, not just the entrypoint.
+    for path in source.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            raise BuildError(f"cannot inspect Python App UI dependencies: {path}: {exc}") from exc
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                if any(item.name == "kavio.ui" or item.name.startswith("kavio.ui.") for item in node.names):
+                    return True
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == "kavio" and any(item.name == "ui" for item in node.names):
+                    return True
+                if node.module and (node.module == "kavio.ui" or node.module.startswith("kavio.ui.")):
+                    return True
+    return False
+
+
+def lua_uses_ui(source: Path) -> bool:
+    # Handle regular Lua module imports; runtime-computed require paths are not discoverable.
+    pattern = re.compile(r"\brequire\s*\(?\s*['\"]kavio\.ui['\"]")
+    return any(pattern.search(path.read_text(encoding="utf-8", errors="replace"))
+               for path in source.rglob("*.lua"))
+
+
+def native_ui_dependencies(executable: Path) -> list[str]:
+    # Detect direct ELF dependencies; the two UI SDK libraries are packaged together.
+    try:
+        result = subprocess.run(["readelf", "-d", str(executable)], text=True,
+                                capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise BuildError(f"cannot inspect native App runtime dependencies ({executable}): {exc}") from exc
+    matches = re.findall(r"\(NEEDED\)\s+Shared library: \[([^]]+)\]", result.stdout)
+    if "libkavio_ui_lvgl.so" in matches:
+        return ["ui_core", "ui_lvgl"]
+    if "libkavio_ui_core.so" in matches:
+        return ["ui_core"]
+    return []
+
+
+def runtime_dependencies(project: dict[str, Any], artifact: Path) -> list[str]:
+    dependencies = infer_dependencies(str(project["language"]))
+    language = project["language"]
+    if language == "cpp":
+        dependencies += native_ui_dependencies(artifact)
+    elif language == "python" and python_uses_ui(artifact):
+        dependencies += ["ui_core", "ui_lvgl", "python_ui_binding"]
+    elif language == "lua" and lua_uses_ui(artifact):
+        dependencies += ["ui_core", "ui_lvgl", "lua_ui_binding"]
     return dependencies
 
 
@@ -214,20 +258,6 @@ def load_project(project_path: Path) -> dict[str, Any]:
     if language not in SUPPORTED_LANGUAGES:
         raise BuildError(f"{project_path}: unsupported language '{language}'")
 
-    sdk_cfg = config.get("sdk", {})
-    if not isinstance(sdk_cfg, dict):
-        raise BuildError(f"{project_path}: sdk must be an object")
-    validate_keys(sdk_cfg, SDK_FIELDS, f"{project_path}: sdk")
-    modules_raw = sdk_cfg.get("modules", [])
-    if not isinstance(modules_raw, list) or not all(isinstance(item, str) for item in modules_raw):
-        raise BuildError(f"{project_path}: sdk.modules must be an array of strings")
-    if len(set(modules_raw)) != len(modules_raw):
-        raise BuildError(f"{project_path}: sdk.modules must not contain duplicates")
-    unknown_modules = sorted(set(modules_raw) - SUPPORTED_SDK_MODULES)
-    if unknown_modules:
-        raise BuildError(f"{project_path}: unsupported sdk.modules: {', '.join(unknown_modules)}")
-    modules = list(modules_raw)
-
     build_cfg = config.get("build", {})
     if not isinstance(build_cfg, dict):
         raise BuildError(f"{project_path}: build must be an object")
@@ -293,12 +323,11 @@ def load_project(project_path: Path) -> dict[str, Any]:
         "project_path": project_path,
         "config": config,
         "language": language,
-        "modules": modules,
         "builder": builder,
         "source_dir": source_dir,
         "target": target,
         "script_entry": script_entry,
-        "dependencies": infer_dependencies(language, modules),
+        "dependencies": infer_dependencies(language),
         "package": package,
         "runtime": runtime,
         "entry": entry,
@@ -346,28 +375,8 @@ def build_sdk(args: argparse.Namespace, project: dict[str, Any] | None = None) -
     sdk_build = BUILD_ROOT / "sdk" / config_key(args.release)
     sdk_build.mkdir(parents=True, exist_ok=True)
 
-    # A project build only enables the language/UI parts that project actually
-    # consumes. This keeps a C++ App independent of Python/Lua development
-    # packages, and keeps framebuffer-only Apps independent of LVGL/FreeType.
-    # `kavio build sdk` has no project context, so it builds the full SDK.
-    if project is None:
-        build_python = True
-        build_lua = True
-        build_ui = True
-    else:
-        language = str(project["language"])
-        build_python = language == "python"
-        build_lua = language == "lua"
-        build_ui = "ui" in project["modules"]
-
-    # Fail before CMake configuration when a pinned third-party source or
-    # required system development package is missing.
-    checks = ["--all"] if project is None else (
-        (["--python"] if build_python else [])
-        + (["--lua"] if build_lua else [])
-        + (["--ui"] if build_ui else [])
-    )
-    run([sys.executable, str(DEPENDENCY_CHECKER), *checks])
+    # The SDK is a complete, stable build regardless of which App is selected.
+    run([sys.executable, str(DEPENDENCY_CHECKER), "--all"])
 
     cmake_configure(
         SDK_SOURCE_DIR,
@@ -377,9 +386,6 @@ def build_sdk(args: argparse.Namespace, project: dict[str, Any] | None = None) -
             "-DCONFIG_LV_BUILD_EXAMPLES=OFF",
             "-DCONFIG_LV_BUILD_DEMOS=OFF",
             "-DLV_BUILD_TESTS=OFF",
-            f"-DKAVIO_BUILD_PYTHON_BINDING={'ON' if build_python else 'OFF'}",
-            f"-DKAVIO_BUILD_LUA_BINDING={'ON' if build_lua else 'OFF'}",
-            f"-DKAVIO_BUILD_LVGL_BACKEND={'ON' if build_ui else 'OFF'}",
         ),
     )
     run([
@@ -589,8 +595,8 @@ def sdk_dependency_artifact(name: str, sdk_build: Path) -> tuple[Path, Path]:
     raise BuildError(f"unsupported SDK runtime dependency: {name}")
 
 
-def copy_device_dependencies(project: dict[str, Any], sdk_build: Path, device_stage: Path) -> None:
-    for dependency in project["dependencies"]:
+def copy_device_dependencies(dependencies: list[str], sdk_build: Path, device_stage: Path) -> None:
+    for dependency in dependencies:
         source, relative_target = sdk_dependency_artifact(dependency, sdk_build)
         target = device_stage / relative_target
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -628,7 +634,7 @@ def package_project(
         target = device_stage / device_entry
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(device_artifact, target)
-    copy_device_dependencies(project, sdk_build, device_stage)
+    copy_device_dependencies(runtime_dependencies(project, device_artifact), sdk_build, device_stage)
     copy_user_assets(project_output / "device", device_stage, "Device assets")
     if not (device_stage / device_entry).is_file():
         raise BuildError(f"staged device.entry is missing: {device_stage / device_entry}")
@@ -1016,12 +1022,11 @@ def cmd_list(_: argparse.Namespace) -> int:
     errors: list[str] = []
     projects = discover_projects(errors=errors)
     if projects:
-        print(f"{'PROJECT':30} {'LANGUAGE':9} {'UI':4} {'HOST':4} NAME")
+        print(f"{'PROJECT':30} {'LANGUAGE':9} {'HOST':4} NAME")
         for item in projects:
             package = item["package"]
             print(
                 f"{str(item['key']):30} {str(item['language']):9} "
-                f"{'yes' if 'ui' in item['modules'] else 'no':4} "
                 f"{'yes' if package.get('host') else 'no':4} {package['name']}"
             )
     else:

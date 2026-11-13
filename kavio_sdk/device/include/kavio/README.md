@@ -27,3 +27,7 @@ kavio::ui::Image image;
 image.SetBuffer(data, data_size, width, height, stride,
                 kavio::PixelFormat::kBGRA8888, 590, 250);
 ```
+
+## UI development guide
+
+See [`Kavio_UI_Development_Guide.md`](../../../../docs/modules/sdk/Kavio_UI_Development_Guide.md) for architecture, control usage, rendering options, and examples.

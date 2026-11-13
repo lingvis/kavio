@@ -19,7 +19,7 @@ Lua App -> Kavio Widget -> SDK LVGL backend -> Presentation
 This template declares only the public optional module:
 
 ```json
-"sdk": { "modules": ["ui"] }
+
 ```
 
 The tool infers Lua runtime, Lua binding, UI runtime and Lua UI binding automatically.

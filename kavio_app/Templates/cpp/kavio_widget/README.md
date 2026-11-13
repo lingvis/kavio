@@ -12,13 +12,7 @@ The public programming model is the Kavio Widget API. The SDK currently renders 
 App -> Kavio Widget -> SDK LVGL backend -> Presentation -> AppView
 ```
 
-The project declares:
-
-```json
-"sdk": { "modules": ["ui"] }
-```
-
-That single public module causes the build system to deploy the UI runtime and the correct language binding automatically.
+The template links the public UI target in its CMakeLists. The build tool detects the resulting runtime dependency and includes the UI libraries automatically. No SDK module declaration is required.
 
 ## Create your app
 

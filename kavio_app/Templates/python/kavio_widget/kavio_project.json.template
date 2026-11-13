@@ -1,11 +1,6 @@
 {
   "projectVersion": 1,
   "language": "python",
-  "sdk": {
-    "modules": [
-      "ui"
-    ]
-  },
   "package": {
     "appId": "{{APP_ID}}",
     "version": "1.0.0",

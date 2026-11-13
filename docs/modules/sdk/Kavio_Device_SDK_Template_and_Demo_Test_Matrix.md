@@ -26,10 +26,7 @@ For every template:
 3. No `kavio_project.json.template` remains in the generated project.
 4. The generated project appears in `./kavio list`.
 5. App ID/name/Device Entry tokens are replaced.
-6. `sdk.modules` is correct:
-   - FrameBuffer: no `ui` module;
-   - Kavio Widget: `ui`;
-   - C++ Advanced UI: `ui`.
+6. Generated projects do not contain `sdk` or `sdk.modules` declarations.
 7. Generated C++ CMake uses the unique generated Device Entry target.
 8. Python/Lua source syntax checks pass in the real SDK environment.
 9. Build/package dependency closure is inferred without developer-maintained internal `.so` lists.

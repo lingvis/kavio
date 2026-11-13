@@ -12,7 +12,6 @@ Do **not** choose this template for ordinary buttons, labels, forms, or settings
 App -> Presentation -> FrameLease -> BGRA buffer -> your renderer -> Present
 ```
 
-No Kavio Widget or LVGL UI module is required. `sdk.modules` is therefore omitted.
 
 ## Create your app
 

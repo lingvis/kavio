@@ -32,3 +32,7 @@ List available templates:
 - `KavioDemoCpp/`, `KavioDemoPython/`, and `KavioDemoLua/` are independent, buildable SDK capability/regression applications.
 
 Do not copy KavioDemo as an application starter.
+
+## UI development guide
+
+For the rendering architecture, available UI controls, interactive screen examples, raw LVGL, and FrameBuffer drawing, see [`Kavio_UI_Development_Guide.md`](../../docs/modules/sdk/Kavio_UI_Development_Guide.md).

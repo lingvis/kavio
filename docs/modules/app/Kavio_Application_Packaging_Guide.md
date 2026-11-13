@@ -72,7 +72,6 @@ Examples:
 
 ```text
 language
-sdk.modules
 build.source
 build.target
 ```
@@ -186,11 +185,7 @@ Lua uses the SDK native Runner as the process entry. The first argument identifi
 
 Projects do not list internal `.so` names.
 
-The root tool derives package dependencies from:
-
-```text
-language + sdk.modules
-```
+The root tool derives the mandatory runtime from `language`, and UI runtime dependencies from native ELF linkage or Python/Lua source imports.
 
 For example Python + UI automatically stages:
 
