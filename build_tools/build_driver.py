@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import copy
 import hashlib
 import json
 import os
@@ -816,18 +815,11 @@ def build_development_package(project: dict[str, Any], args: argparse.Namespace)
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "app.kap"
 
-    # Board-local development deployment updates only the Device Component.
-    # Keep the project definition unchanged so formal packaging still includes
-    # the Host Component when the project declares one.
-    deployment_project = copy.deepcopy(project)
-    deployment_package = deployment_project.get("package")
-    if not isinstance(deployment_package, dict):
-        raise BuildError("project package definition is invalid")
-    deployment_package.pop("host", None)
-
+    # Keep declared Host assets in the development package so reinstalling
+    # the App does not remove its Host Component registration.
     package_args = argparse.Namespace(**vars(args))
     package_args.output = output
-    package_path = package_project(deployment_project, package_args, artifact, sdk_build)
+    package_path = package_project(project, package_args, artifact, sdk_build)
     print(f"Development package: {package_path}", flush=True)
     return package_path
 
