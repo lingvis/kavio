@@ -4,7 +4,7 @@ Kavio SDK 是 Kavio App 的公开开发接口集合，分为设备端 Device SDK
 
 ```text
 kavio_sdk/
-├── common/logging/          # 公共日志模块
+├── modules/                 # SDK 公共模块（含 logging）
 ├── device/                  # Device App SDK：C++ / Python / Lua 5.4
 └── host/                    # Windows x64 Host Component C ABI
 ```

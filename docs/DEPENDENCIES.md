@@ -16,11 +16,12 @@
 
 | 依赖 | 固定版本 | 固定路径（相对仓库根目录） |
 |---|---|---|
-| Protobuf（含 protoc） | 3.21.12 | `kavio_sdk/device/3rdParty/protobuf-3.21.12/` |
-| JsonCpp | 1.9.5 | `kavio_sdk/device/3rdParty/jsoncpp-1.9.5/` |
-| Lua | 5.4.1 | `kavio_sdk/device/3rdParty/lua-5.4.1/` |
-| LVGL | 9.4.0 | `kavio_sdk/device/3rdParty/lvgl-9.4.0/` |
-| FreeType | 2.10.0 | `kavio_sdk/device/3rdParty/freetype-2.10.0/` |
+| Protobuf（含 protoc） | 3.21.12 | `kavio_sdk/modules/protobuf-3.21.12/` |
+| JsonCpp | 1.9.5 | `kavio_sdk/modules/jsoncpp-1.9.5/` |
+| Lua | 5.4.1 | `kavio_sdk/modules/lua-5.4.1/` |
+| LVGL | 9.4.0 | `kavio_sdk/modules/lvgl-9.4.0/` |
+| FreeType | 2.10.0 | `kavio_sdk/modules/freetype-2.10.0/` |
+| Kavio logging（spdlog） | 1.15.3 | `kavio_sdk/modules/logging/` |
 
 Lua 使用扁平源码目录（`lua.h` 与 `lapi.c` 在同一级）；不再自动选择 `lua-5.4*`，不再扫描全部 `.c` 文件。LVGL 和 FreeType 使用 SDK 指定版本；启用 UI 后若缺失即配置失败。Protobuf 的 `protoc` 由固定版本源码构建，不能用 PATH 下其他版本替代。
 

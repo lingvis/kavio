@@ -193,7 +193,7 @@ Host ABI 不依赖日志模块。Host Component 不使用 SDK Logger 时，无�
 需要使用统一 Logger 时，额外将以下目录加入工程 include path：
 
 ```text
-kavio_sdk/common/logging
+kavio_sdk/modules/logging
 ```
 
 并在需要日志的 `.cpp` 文件中显式包含：

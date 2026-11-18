@@ -4,7 +4,7 @@
 
 ## 1. 基本规则
 
-- 统一实现：C++14 **header-only** `kavio_sdk/common/logging/KLogger.h`，使用 SDK 随附 `common/logging/spdlog`（1.15.3、bundled fmt），**无需生成或链接日志专用库**。
+- 统一实现：C++14 **header-only** `kavio_sdk/modules/logging/KLogger.h`，使用 SDK 随附 `modules/logging/spdlog`（1.15.3、bundled fmt），**无需生成或链接日志专用库**。
 - 日志宏：`KLOGT / KLOGD / KLOGI / KLOGW / KLOGE / KLOGC`，采用 fmt `{}` 占位符。源码文件、行号由宏记录。
 - C++ SDK Logger 只向本地文件输出，不通过 IPC、USB、Channel 转发。Python App 自行使用标准库 logging 配置日志目录；可选通过 stderr 输出开发日志，由进程宿主捕获。运行状态通知属于独立业务机制。
 - **按 UTC 自然日切割**：同一天写同一个文件；UTC 日期变化即打开新文件。不按文件大小轮转。运行期即使没有新日志，C++ 后台刷新线程也会在检测到日期变化后切换文件；Python 标准库 logging 不自动提供此约定，若应用需要 UTC 日切，应自行配置 Handler。
@@ -85,7 +85,7 @@ Logger::InitSystem("KavioAppHost", Runtime::AppHost, Level::Debug);
 
 Host ABI 与 Logger 完全解耦。`KavioHost.h` 不包含 `KLogger.h`，不声明或自动导出日志生命周期函数，AppHost 也不需要识别 DLL 的日志专用导出入口。
 
-Host Component 选择使用 SDK Logger 时，应自行添加 `kavio_sdk/common/logging` include 目录，并在需要日志的 `.cpp` 文件中显式包含：
+Host Component 选择使用 SDK Logger 时，应自行添加 `kavio_sdk/modules/logging` include 目录，并在需要日志的 `.cpp` 文件中显式包含：
 
 ```cpp
 #include <KLogger.h>
@@ -163,7 +163,7 @@ Python 标准库采用 `%s` 等格式化占位符。`FileHandler` 默认不进�
 
 ## 8. 构建
 
-Device SDK 的 CMake 配置导出 `common/logging`；Windows KavioWin、AppHost 和 Host SDK Demo 只需添加 `common/logging` 一个 include 路径。无需日志专用 `.lib/.a/.dll/.so`。当前公用源码以 C++14 为下限；Windows v140 与 VS680 ARM64 的完整构建及实机验证需在对应环境完成。
+Device SDK 的 CMake 配置导出 `modules/logging`；Windows KavioWin、AppHost 和 Host SDK Demo 只需添加 `modules/logging` 一个 include 路径。无需日志专用 `.lib/.a/.dll/.so`。当前公用源码以 C++14 为下限；Windows v140 与 VS680 ARM64 的完整构建及实机验证需在对应环境完成。
 
 ### 8.1 Windows 源码编码约定
 

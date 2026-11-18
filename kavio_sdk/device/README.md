@@ -30,9 +30,10 @@ kavio_sdk/device/
 │   ├── python/                 # Python Native + 高层 kavio 包
 │   └── lua/                    # Lua 5.4 Native + Runner + 高层 kavio 包
 ├── proto/                      # SDK 内部协议源文件
-├── tools/                      # CMake Package 生成工具
-└── 3rdParty/                   # SDK 构建依赖
+└── tools/                      # CMake Package 生成工具
 ```
+
+SDK 依赖源码位于 `kavio_sdk/modules/`。
 
 普通 App 不应包含 `src/`、`src/internal/` 或生成 Protobuf 头文件。
 

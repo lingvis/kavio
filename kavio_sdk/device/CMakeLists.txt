@@ -39,20 +39,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 
-# The Device SDK only uses the explicitly vendored third-party source trees.
+# SDK dependencies are sourced from the modules directory.
 set(KAVIO_SDK_DEVICE_DIR "${CMAKE_CURRENT_LIST_DIR}")
-set(KAVIO_3RDPARTY_DIR "${KAVIO_SDK_DEVICE_DIR}/3rdParty")
+set(KAVIO_SDK_MODULES_DIR "${KAVIO_SDK_DEVICE_DIR}/../modules")
 set(KAVIO_SDK_INC_DIR "${KAVIO_SDK_DEVICE_DIR}/include")
-set(KAVIO_LOGGING_DIR "${KAVIO_SDK_DEVICE_DIR}/../common/logging")
+set(KAVIO_LOGGING_DIR "${KAVIO_SDK_MODULES_DIR}/logging")
 set(KAVIO_SDK_SRC_DIR "${KAVIO_SDK_DEVICE_DIR}/src")
 set(KAVIO_SDK_PROTO_DIR "${KAVIO_SDK_DEVICE_DIR}/proto")
 set(KAVIO_SDK_PROTO_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/sdk_proto_src")
 set(KAVIO_SDK_VERSION_HEADER "${KAVIO_SDK_INC_DIR}/kavio/KavioSdkVersion.h")
-set(KAVIO_PROTOBUF_DIR "${KAVIO_3RDPARTY_DIR}/protobuf-3.21.12")
-set(KAVIO_JSONCPP_DIR "${KAVIO_3RDPARTY_DIR}/jsoncpp-1.9.5")
-set(KAVIO_LUA_SOURCE_DIR "${KAVIO_3RDPARTY_DIR}/lua-5.4.1")
-set(KAVIO_LVGL_ROOT "${KAVIO_3RDPARTY_DIR}/lvgl-9.4.0")
-set(KAVIO_FREETYPE_ROOT "${KAVIO_3RDPARTY_DIR}/freetype-2.10.0")
+set(KAVIO_PROTOBUF_DIR "${KAVIO_SDK_MODULES_DIR}/protobuf-3.21.12")
+set(KAVIO_JSONCPP_DIR "${KAVIO_SDK_MODULES_DIR}/jsoncpp-1.9.5")
+set(KAVIO_LUA_SOURCE_DIR "${KAVIO_SDK_MODULES_DIR}/lua-5.4.1")
+set(KAVIO_LVGL_ROOT "${KAVIO_SDK_MODULES_DIR}/lvgl-9.4.0")
+set(KAVIO_FREETYPE_ROOT "${KAVIO_SDK_MODULES_DIR}/freetype-2.10.0")
 set(KAVIO_LV_CONF_PATH "${KAVIO_SDK_DEVICE_DIR}/lv_conf.h")
 
 function(kavio_require_files label)
@@ -62,6 +62,10 @@ function(kavio_require_files label)
         endif()
     endforeach()
 endfunction()
+
+kavio_require_files("logging"
+    "${KAVIO_LOGGING_DIR}/KLogger.h"
+    "${KAVIO_LOGGING_DIR}/spdlog/spdlog.h")
 
 kavio_require_files("protobuf 3.21.12"
     "${KAVIO_PROTOBUF_DIR}/CMakeLists.txt"
@@ -625,7 +629,7 @@ add_custom_target(kavio_lua_ui_package DEPENDS kavio_lua_ui_native)
 # Native Apps need only:
 #   1. public Kavio SDK headers;
 #   2. generated SDK protobuf headers;
-#   3. protobuf public headers from the bundled 3rdParty source tree.
+#   3. protobuf public headers from the SDK modules source tree.
 set(KAVIO_DEVICE_SDK_CONFIG_FILE "${CMAKE_BINARY_DIR}/KavioDeviceSdkConfig.cmake")
 set(KAVIO_DEVICE_SDK_CONFIG_GENERATOR
     "${KAVIO_SDK_DEVICE_DIR}/tools/GenerateCppSdkConfig.cmake")

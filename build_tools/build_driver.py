@@ -493,7 +493,7 @@ def build_lua_device(project: dict[str, Any], args: argparse.Namespace, sdk_buil
     if not runner.is_file() or not core_binding.is_file():
         raise BuildError(
             "Lua SDK runtime was not built. Ensure Lua 5.4 source is available under "
-            "kavio_sdk/device/3rdParty and rebuild the SDK."
+            "kavio_sdk/modules and rebuild the SDK."
         )
     app_build = project_build_dir(project, args)
     files_dir = app_build / "files"
