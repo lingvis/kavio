@@ -81,31 +81,46 @@ Logger::InitSystem("KavioAppHost", Runtime::AppHost, Level::Debug);
 
 系统组件与 App 均有各自的本地文件 sink。
 
-## 5. Windows Host DLL：由宿主自动触发 DLL 自有日志初始化
+## 5. Windows Host DLL：组件自行管理日志生命周期
 
-**不再使用日志回调或 `KavioHostBindLogging`。** DLL 内部直接通过相同的 header-only Logger 写文件，因此 `KLOGI("frame={}", frame)` 的格式化与普通 C++ 程序完全一致，不需要开发者构造日志字符串或调用繁复的回调参数。
+Host ABI 与 Logger 完全解耦。`KavioHost.h` 不包含 `KLogger.h`，不声明或自动导出日志生命周期函数，AppHost 也不需要识别 DLL 的日志专用导出入口。
 
-在**一个**实现 Host Component 导出的 `.cpp` 文件中：
+Host Component 选择使用 SDK Logger 时，应自行添加 `kavio_sdk/common/logging` include 目录，并在需要日志的 `.cpp` 文件中显式包含：
 
 ```cpp
-#define KAVIO_HOST_IMPLEMENTATION
-#include <kavio/KavioHost.h>
+#include <KLogger.h>
+```
 
-void CaptureFrame(unsigned frame) {
-    KLOGI("Capture started, frame={}", frame);
+由组件负责初始化和关闭 Logger。推荐在 `KavioHostCreate()` 中、创建业务线程之前初始化；在 `KavioHostDestroy()` 中，确认所有可能写日志的线程均已停止后关闭：
+
+```cpp
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL
+KavioHostCreate(const KavioHostCreateParams* params, KavioHostHandle* out_host)
+{
+    const auto result = kavio::logging::Logger::Init(
+        "HostComponent",
+        kavio::logging::Level::Info);
+    if (!result.ok()) {
+        return KavioResult_InternalError;
+    }
+
+    // 创建组件实例并继续初始化。
+    return KavioResult_Success;
+}
+
+KAVIO_HOST_ENTRY void KAVIO_HOST_CALL
+KavioHostDestroy(KavioHostHandle host)
+{
+    // 先停止业务线程、确保不再产生日志，再关闭 Logger。
+    kavio::logging::Logger::Shutdown();
 }
 ```
 
-`KavioHost.h` 随 `KAVIO_HOST_IMPLEMENTATION` **自动导出**两个 C ABI 生命周期函数：
+组件也可以选择其他初始化时机、日志名称和级别。若不需要 SDK Logger，则不必引入日志头文件或链接任何日志相关接口。
 
-- `KavioHostInitLogging()`：由 AppHost 在 `LoadLibraryExW()` 后、`KavioHostCreate()` 前调用；DLL 自行初始化文件 Logger，默认日志名为 `HostComponent`。
-- `KavioHostShutdownLogging()`：由 AppHost 在 `KavioHostDestroy()` 后、`FreeLibrary()` 前调用，刷新并关闭 DLL 日志文件。
+Logger 使用 `KAVIO_APP_LOG_DIR` 指定的应用日志目录。Host DLL 与 AppHost 分别运行在独立二进制模块中，各自拥有独立的 header-only Logger 状态；建议使用不同文件名前缀，避免文件名冲突。Host Component 日志仅写本地文件，不通过 Host C ABI 逐条转发。
 
-它们是零参数本地生命周期调用，**不是逐条日志回调**，也不要求第三方用户手工调用 `Logger::Init()`。DLL 业务只写 `KLOG*`。初始化失败会使 Host Component 加载失败，避免业务正常运行却静默丢日志。
-
-DLL 与 AppHost 的日志保存在**同一个 App 日志目录，但不同文件**。这是选择 header-only、无日志回调、无跨 DLL Logger 对象共享后的明确取舍。不要尝试让独立的 sink 同时写同一文件，否则无法保证文件切换、写入原子性与关闭顺序。
-
-开发者应在 `KavioHostStop/KavioHostDestroy` 阶段停止业务线程并保证不再写入；随后由宿主关闭 DLL 日志并卸载模块。Host Component 日志仅使用本地文件 Logger，不通过 Host C ABI 逐条转发。
+Host Component 直接包含 `KavioHost.h` 即可；SDK 默认声明 DLL 导出入口，不需要定义实现模式宏。日志仍由组件按需自行管理。
 
 ## 6. Device Python App
 

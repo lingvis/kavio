@@ -13,13 +13,11 @@
  * 2. ABI 不兼容变更要求 Host DLL 重新编译；可扩展字段通过 struct_size 判定。
  * 3. 只能访问 struct_size 已覆盖的字段。
  * 4. ABI 边界不传递 C++ STL 对象、异常或跨运行库分配/释放的内存。
- * 5. KavioAppHost 以 KAVIO_HOST_TYPES_ONLY 包含本文件，只取得 ABI 类型，不声明
- *    组件需要实现的导出入口；DLL Loader 的函数指针类型也只存在于 KavioAppHost 内部。
- * 6. 实现 Host Component 导出入口的 .cpp 必须在包含本文件前定义
- *    KAVIO_HOST_IMPLEMENTATION。这样头文件只提供 ABI 类型，不预先声明导出入口，
- *    避免 MSVC 将普通声明与 __declspec(dllexport) 定义判定为不同链接属性。
- *    SDK 同时自动导出 KavioHostInitLogging/KavioHostShutdownLogging，使 DLL 在业务创建前初始化自己的本地日志。
- *
+ * 5. 普通 Host Component 直接包含本头文件即可，默认提供 DLL 导出声明；
+ *    开发者不需要定义预处理宏或自行配置导出属性。
+ * 6. KavioAppHost 等内部宿主工程可使用 KAVIO_HOST_TYPES_ONLY 只取得 ABI 类型，
+ *    不声明 Host Component 导出入口。加载器可通过 GetProcAddress 获取函数地址。
+ * 7. 本头文件不依赖日志模块。组件需要日志时，应自行包含 KLogger.h 并管理 Logger 生命周期。
  * 必须实现：
  *   KavioHostCreate / KavioHostStart / KavioHostStop /
  *   KavioHostDestroy / KavioHostOnData
@@ -28,7 +26,6 @@
  *   KavioHostPrepareStop / KavioHostOnDeviceState / KavioHostOpenPanel
  *
  * 实现导出函数的推荐形式：
- *   #define KAVIO_HOST_IMPLEMENTATION
  *   #include <kavio/KavioHost.h>
  *
  *   KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL
@@ -46,16 +43,11 @@
 #define KAVIO_HOST_VISIBILITY __attribute__((visibility("default")))
 #endif
 
-#if defined(KAVIO_HOST_TYPES_ONLY) && defined(KAVIO_HOST_IMPLEMENTATION)
-#error KAVIO_HOST_TYPES_ONLY and KAVIO_HOST_IMPLEMENTATION cannot be used together
-#endif
-
-#ifdef KAVIO_HOST_IMPLEMENTATION
+/* App Component 默认导出；内部宿主通过 KAVIO_HOST_TYPES_ONLY 只引用 ABI 类型。 */
 #ifdef __cplusplus
 #define KAVIO_HOST_ENTRY extern "C" KAVIO_HOST_VISIBILITY
 #else
 #define KAVIO_HOST_ENTRY KAVIO_HOST_VISIBILITY
-#endif
 #endif
 
 #ifdef __cplusplus
@@ -93,10 +85,6 @@ typedef uint32_t(KAVIO_HOST_CALL* KavioHostGetChannelIdFn)(void* context);
 typedef KavioResult(KAVIO_HOST_CALL* KavioHostRestartFn)(
     void* context,
     uint32_t reason);
-
-/* Host DLL 自行持有文件 Logger。AppHost 仅触发 SDK 自动导出的零参数生命周期入口。 */
-typedef KavioResult(KAVIO_HOST_CALL* KavioHostInitLoggingFn)(void);
-typedef void(KAVIO_HOST_CALL* KavioHostShutdownLoggingFn)(void);
 
 /* 返回当前 App Host Component 可写的私有数据目录。 */
 typedef const char*(KAVIO_HOST_CALL* KavioHostGetDataPathFn)(void* context);
@@ -141,36 +129,36 @@ typedef struct KavioHostCreateParams
     ((uint32_t)(offsetof(KavioHostCreateParams, host) + \
                 sizeof(((KavioHostCreateParams*)0)->host)))
 
-#if !defined(KAVIO_HOST_TYPES_ONLY) && !defined(KAVIO_HOST_IMPLEMENTATION)
+#ifndef KAVIO_HOST_TYPES_ONLY
 
 /*
  * 必须实现：创建一个 Host Component 实例。
  * 这里只做轻量初始化；成功时把组件私有对象写入 out_host，随后会调用 KavioHostStart。
  */
-KavioResult KAVIO_HOST_CALL KavioHostCreate(
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostCreate(
     const KavioHostCreateParams* params,
     KavioHostHandle* out_host);
 
 /* 必须实现：启动组件业务逻辑及工作线程。 */
-KavioResult KAVIO_HOST_CALL KavioHostStart(KavioHostHandle host);
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostStart(KavioHostHandle host);
 
 /*
  * 可选实现：在 KavioHostStop 前停止接受新任务，并尽量让在途任务收敛。
  * DLL 未导出该符号时，KavioAppHost 直接跳过该阶段。
  */
-KavioResult KAVIO_HOST_CALL KavioHostPrepareStop(KavioHostHandle host);
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostPrepareStop(KavioHostHandle host);
 
 /* 必须实现：停止业务工作。返回后不应再主动发送新的 Device 数据。 */
-KavioResult KAVIO_HOST_CALL KavioHostStop(KavioHostHandle host);
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostStop(KavioHostHandle host);
 
 /* 必须实现：释放由 KavioHostCreate 创建的组件实例。 */
-void KAVIO_HOST_CALL KavioHostDestroy(KavioHostHandle host);
+KAVIO_HOST_ENTRY void KAVIO_HOST_CALL KavioHostDestroy(KavioHostHandle host);
 
 /*
  * 必须实现：接收当前 App 的 Device Component 发来的一条完整原始数据报。
  * data 由 KavioAppHost 持有，只在本次调用期间有效；需要异步使用时必须自行拷贝。
  */
-KavioResult KAVIO_HOST_CALL KavioHostOnData(
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostOnData(
     KavioHostHandle host,
     const void* data,
     size_t size);
@@ -179,7 +167,7 @@ KavioResult KAVIO_HOST_CALL KavioHostOnData(
  * 可选实现：对端 Device Endpoint 上下线通知。
  * online 非 0 表示当前已具备双向通信条件；为 0 时不得假定 Device Component 可接收数据。
  */
-void KAVIO_HOST_CALL KavioHostOnDeviceState(
+KAVIO_HOST_ENTRY void KAVIO_HOST_CALL KavioHostOnDeviceState(
     KavioHostHandle host,
     uint32_t online);
 
@@ -187,27 +175,11 @@ void KAVIO_HOST_CALL KavioHostOnDeviceState(
  * 可选实现：打开 Host Component 自己提供的 App Panel。
  * DLL 未导出该符号时，KavioAppHost 认为该 App 没有 Host Panel。
  */
-KavioResult KAVIO_HOST_CALL KavioHostOpenPanel(KavioHostHandle host);
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostOpenPanel(KavioHostHandle host);
 
-#endif  /* !KAVIO_HOST_TYPES_ONLY && !KAVIO_HOST_IMPLEMENTATION */
+#endif  /* !KAVIO_HOST_TYPES_ONLY */
 
 #ifdef __cplusplus
 }
 #endif
 
-// KAVIO_HOST_IMPLEMENTATION is defined in exactly one DLL source file.
-// AppHost calls these generated lifecycle exports after loading and before unloading
-// the component. The DLL writes its own file directly, using the same KLOG* macros.
-// No log callback, IPC transport or explicit user initialization is required.
-#if defined(KAVIO_HOST_IMPLEMENTATION) && defined(__cplusplus)
-#include <KLogger.h>
-KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL KavioHostInitLogging(void)
-{
-    const auto result = ::kavio::logging::Logger::Init("HostComponent", ::kavio::logging::Level::Info);
-    return result.ok() ? KavioResult_Success : KavioResult_InternalError;
-}
-KAVIO_HOST_ENTRY void KAVIO_HOST_CALL KavioHostShutdownLogging(void)
-{
-    ::kavio::logging::Logger::Shutdown();
-}
-#endif

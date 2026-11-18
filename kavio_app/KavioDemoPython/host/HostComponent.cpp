@@ -8,7 +8,6 @@
  * rather than manipulating HWND controls directly from transport threads.
  */
 
-#define KAVIO_HOST_IMPLEMENTATION
 #include <kavio/KavioHost.h>
 
 #include "../common/DemoProtocol.h"

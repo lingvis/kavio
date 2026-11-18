@@ -4,7 +4,7 @@ Kavio Host SDK 用于开发运行在 Windows 上的 Kavio Host Component。
 
 Host Component 是一个 **Windows x64 DLL**。它适合实现必须运行在 Windows 侧的功能，例如系统信息采集、文件访问、图片解码、自定义 App Panel，以及通过 USB Channel 与 Kavio Device 上的 Device Component 交换业务数据。
 
-Host SDK 是 header-only C ABI，不需要单独构建或链接 SDK 库。统一日志也是 header-only，需额外引入公共日志头文件目录。
+Host SDK 是 header-only C ABI，不需要单独构建或链接 SDK 库。日志是独立的可选能力；只有使用日志时，才需要额外引入公共日志头文件目录。
 
 ## 1. 引入 SDK
 
@@ -20,14 +20,9 @@ Host SDK 是 header-only C ABI，不需要单独构建或链接 SDK 库。统一
 #include <kavio/KavioHost.h>
 ```
 
-实现 DLL 导出函数的 `.cpp` 文件应在包含头文件前定义：
+Host Component 直接包含该头文件即可；SDK 默认提供 C ABI 函数的 DLL 导出声明，无需定义宏或配置特殊的预处理选项。
 
-```cpp
-#define KAVIO_HOST_IMPLEMENTATION
-#include <kavio/KavioHost.h>
-```
-
-并使用：
+定义入口时可继续使用：
 
 ```cpp
 KAVIO_HOST_ENTRY
@@ -191,28 +186,50 @@ host_api->get_data_path(host_api->context)
 
 App 的持久化缓存、Host 侧配置和业务数据应保存在该目录，不要依赖 DLL 所在目录可写。
 
-## 9. 日志
+## 9. 日志（可选）
 
-Host DLL 通过统一 header-only Logger **直接写入独立本地日志文件**，不经过 AppHost 日志回调或 IPC。与 AppHost 共用 App 专属目录，但分别保存 `HostComponent_*.log` 与 `KavioAppHost_*.log`。除 `kavio_sdk/host/include` 外，额外加入：
+Host ABI 不依赖日志模块。Host Component 不使用 SDK Logger 时，无需添加任何日志相关 include 路径或调用日志接口。
+
+需要使用统一 Logger 时，额外将以下目录加入工程 include path：
 
 ```text
 kavio_sdk/common/logging
 ```
 
-使用示例：
+并在需要日志的 `.cpp` 文件中显式包含：
 
 ```cpp
-#define KAVIO_HOST_IMPLEMENTATION
-#include <kavio/KavioHost.h>  // SDK 自动导出 DLL 日志生命周期入口
+#include <KLogger.h>
+```
 
-void OnStarted() {
-    KLOGI("Host Component started, frame={}", 42);
+Logger 的初始化和关闭由组件自行管理。典型做法是在 `KavioHostCreate` 中、启动业务线程之前初始化，在 `KavioHostDestroy` 中、所有日志线程停止之后关闭：
+
+```cpp
+#include <KLogger.h>
+
+KAVIO_HOST_ENTRY KavioResult KAVIO_HOST_CALL
+KavioHostCreate(const KavioHostCreateParams* params, KavioHostHandle* out_host)
+{
+    const auto result = kavio::logging::Logger::Init(
+        "HostComponent",
+        kavio::logging::Level::Info);
+    if (!result.ok()) {
+        return KavioResult_InternalError;
+    }
+
+    // 继续创建组件实例。
+    return KavioResult_Success;
+}
+
+KAVIO_HOST_ENTRY void KAVIO_HOST_CALL
+KavioHostDestroy(KavioHostHandle host)
+{
+    // 先停止所有可能写日志的业务线程并释放组件资源。
+    kavio::logging::Logger::Shutdown();
 }
 ```
 
-AppHost 加载 DLL 后自动调用 `KavioHostInitLogging()`，DLL 内部打开自己的文件；卸载前自动调用 `KavioHostShutdownLogging()`。开发者无需显式调用 `Logger::Init()`，也不需要处理日志回调。按 **UTC 自然日** 切割为 `HostComponent_YYYYMMDD_HHMMSS_mmm_pid.log`，历史保留 72 小时，不按大小轮转。
-
-Host Component 使用 `KLOGT/KLOGD/KLOGI/KLOGW/KLOGE/KLOGC` 写本地日志；DLL 必须按当前 `KavioHost.h` ABI 编译。
+Host Component 使用 `KLOGT/KLOGD/KLOGI/KLOGW/KLOGE/KLOGC` 写本地日志。Logger 按 **UTC 自然日** 切割文件，历史保留 72 小时，不按大小轮转。日志目录由运行环境通过 `KAVIO_APP_LOG_DIR` 提供；初始化失败时应由组件决定是否终止启动。
 
 请阅读 [统一日志模块完整设计](../../docs/modules/sdk/Kavio_Logging_Design.md)。
 
@@ -232,7 +249,6 @@ Host ABI 遵循以下规则：
 ## 11. 最小实现
 
 ```cpp
-#define KAVIO_HOST_IMPLEMENTATION
 #include <kavio/KavioHost.h>
 
 struct MyHost {
